@@ -9,17 +9,16 @@ private let coldStartPrompts = [
     "What data is missing?"
 ]
 
-private let offlineReply = "Coach is offline right now — live insights arrive in a later phase. For now, explore your latest data in the Today, Vitals, Activity, and Sleep tabs."
-
 struct CoachView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \CoachMessage.createdAt) private var messages: [CoachMessage]
     @Query private var conversations: [CoachConversation]
     @State private var draft = ""
+    @State private var viewModel = CoachViewModel()
     @FocusState private var composerFocused: Bool
 
     private var showColdStart: Bool {
-        messages.isEmpty || messages.last?.role == "assistant"
+        !viewModel.isSending && (messages.isEmpty || messages.last?.role == "assistant")
     }
 
     var body: some View {
@@ -30,7 +29,10 @@ struct CoachView: View {
                 ScrollView {
                     VStack(spacing: 12) {
                         ForEach(messages) { message in
-                            CoachBubble(message: message).id(message.id)
+                            CoachBubble(message: message, onChipTap: { send($0) }).id(message.id)
+                        }
+                        if viewModel.isSending {
+                            CoachTraceStrip(events: viewModel.traceEvents).id("trace")
                         }
                     }
                     .padding(.horizontal, 12)
@@ -39,6 +41,9 @@ struct CoachView: View {
                 }
                 .onChange(of: messages.count) {
                     if let last = messages.last { withAnimation { proxy.scrollTo(last.id, anchor: .bottom) } }
+                }
+                .onChange(of: viewModel.traceEvents.count) {
+                    withAnimation { proxy.scrollTo("trace", anchor: .bottom) }
                 }
             }
 
@@ -63,6 +68,9 @@ struct CoachView: View {
                 }
                 composer
             }
+            // Lift the composer just above the overlaid BottomNavBar (~60pt of
+            // content above the safe area); collapse when the keyboard is up.
+            .padding(.bottom, composerFocused ? 8 : 60)
             .background(PulseColors.secondaryBackground)
         }
         .background(PulseColors.background)
@@ -116,17 +124,17 @@ struct CoachView: View {
         .padding(.horizontal, 12).padding(.vertical, 10)
     }
 
-    private var canSend: Bool { !draft.trimmingCharacters(in: .whitespaces).isEmpty }
+    private var canSend: Bool {
+        !draft.trimmingCharacters(in: .whitespaces).isEmpty && !viewModel.isSending
+    }
 
     private func send(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty, !viewModel.isSending else { return }
         let conversationId = activeConversationId()
-        let now = Date()
-        modelContext.insert(CoachMessage(conversationId: conversationId, role: "user", body: trimmed, createdAt: now))
-        modelContext.insert(CoachMessage(conversationId: conversationId, role: "assistant", body: offlineReply, createdAt: now.addingTimeInterval(0.1)))
-        try? modelContext.save()
         draft = ""
+        composerFocused = false
+        Task { await viewModel.send(trimmed, conversationId: conversationId, context: modelContext) }
     }
 
     private func activeConversationId() -> UUID {
@@ -169,20 +177,59 @@ struct CoachOrb: View {
 
 struct CoachBubble: View {
     let message: CoachMessage
+    var onChipTap: ((String) -> Void)?
+
+    private var structured: CoachResponse? {
+        message.role == "assistant" ? CoachResponse.decode(fromJSON: message.cardsJSON) : nil
+    }
+
     var body: some View {
         HStack {
             if message.role == "user" { Spacer(minLength: 40) }
-            Text(message.body)
-                .font(.system(size: 14))
-                .foregroundStyle(message.role == "user" ? .white : PulseColors.textPrimary)
-                .padding(14)
-                .background(message.role == "user" ? PulseColors.accent : PulseColors.card)
-                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .stroke(message.role == "user" ? Color.clear : PulseColors.borderSubtle, lineWidth: 1)
-                )
+            Group {
+                if let structured {
+                    CoachResponseView(response: structured, onChipTap: onChipTap)
+                        .padding(14)
+                        .background(PulseColors.card)
+                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+                } else {
+                    Text(message.body)
+                        .font(.system(size: 14))
+                        .foregroundStyle(message.role == "user" ? .white : PulseColors.textPrimary)
+                        .padding(14)
+                        .background(message.role == "user" ? PulseColors.accent : PulseColors.card)
+                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .stroke(message.role == "user" ? Color.clear : PulseColors.borderSubtle, lineWidth: 1)
+                        )
+                }
+            }
             if message.role != "user" { Spacer(minLength: 40) }
         }
+    }
+}
+
+/// Live progress strip shown while a turn runs (in-process trace).
+struct CoachTraceStrip: View {
+    let events: [CoachTraceEvent]
+
+    private var label: String {
+        events.last(where: { $0.status != .done })?.label ?? "Thinking…"
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ProgressView().controlSize(.small).tint(PulseColors.accent)
+            Text(label)
+                .font(.system(size: 12))
+                .foregroundStyle(PulseColors.textMuted)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14).padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(PulseColors.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
     }
 }

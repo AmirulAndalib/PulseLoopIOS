@@ -71,6 +71,8 @@ struct SettingsView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
+                CoachSettingsSection()
+
                 SectionHeader(title: "Tools", action: nil)
                 PrimaryButton(title: "Debug", systemImage: "ladybug") {
                     path.append(AppRoute.debug)
