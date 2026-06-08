@@ -21,7 +21,8 @@ enum ModelContainerFactory {
             CoachMessage.self,
             CoachMemory.self,
             CoachToolCall.self,
-            CoachNotificationRecord.self
+            CoachNotificationRecord.self,
+            CoachSummary.self
         ])
         
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: inMemory)

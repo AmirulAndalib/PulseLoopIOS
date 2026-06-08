@@ -115,8 +115,8 @@ struct MainTabView: View {
             .ignoresSafeArea(.keyboard, edges: .bottom)
             .onChange(of: selected) { _, _ in UIApplication.shared.endEditing() }
         }
-        .onChange(of: nav.openDailyCheckins) { _, open in
-            if open { selected = .coach }  // CoachView opens the thread + resets the flag
+        .onChange(of: nav.requestedConversationId) { _, id in
+            if id != nil { selected = .coach }  // CoachView opens the thread + resets the flag
         }
         .background(PulseColors.background.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)

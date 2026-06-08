@@ -4,11 +4,21 @@ import SwiftData
 struct SleepView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(RingSyncCoordinator.self) private var coordinator
+    @Query private var allSummaries: [CoachSummary]
     @State private var range: SleepRangeKey
 
     init() {
         let raw = UserDefaults.standard.string(forKey: "startSleepRange")
         _range = State(initialValue: SleepRangeKey.allCases.first { $0.rawValue == raw } ?? .day)
+    }
+
+    private var summaryService: CoachSummaryService { CoachSummaryService(modelContext: modelContext) }
+
+    private var daySummary: CoachSummary? {
+        allSummaries.filter { $0.kind == "sleep_day" }.max(by: { $0.updatedAt < $1.updatedAt })
+    }
+    private func rangeSummary(_ range: SleepRangeKey) -> CoachSummary? {
+        allSummaries.first { $0.kind == "sleep_range_\(range.rawValue)" }
     }
 
     var body: some View {
@@ -35,6 +45,24 @@ struct SleepView: View {
         }
         .background(PulseColors.background)
         .refreshable { await coordinator.pullToRefresh() }
+        .task(id: range) {
+            if range == .day { await summaryService.refreshSleepDayIfNeeded() }
+            else { await summaryService.refreshSleepRangeIfNeeded(range) }
+        }
+    }
+
+    /// A summary-backed coach card; falls back to the scripted `SleepCoach` until
+    /// the LLM summary is generated. Tapping opens the seeded chat thread.
+    @ViewBuilder
+    private func summaryCard(_ summary: CoachSummary?, fallback: SleepCoach) -> some View {
+        if let summary {
+            Button { summaryService.openInChat(summary) } label: {
+                CoachMessageCard(headline: summary.title, body: summary.body, chips: summary.chips)
+            }
+            .buttonStyle(.plain)
+        } else {
+            CoachMessageCard(headline: fallback.headline, body: fallback.body, chips: fallback.chips)
+        }
     }
 
     // MARK: Day
@@ -59,7 +87,7 @@ struct SleepView: View {
                 light: SleepFormat.duration(night.lightMinutes),
                 awake: SleepFormat.duration(night.awakeMinutes)
             )
-            CoachMessageCard(headline: coach.headline, body: coach.body, chips: coach.chips)
+            summaryCard(daySummary, fallback: coach)
         } else {
             let noData = SleepInsights.noDataState(.day)
             SleepHeroCardView(label: noData.label, value: noData.value, support: noData.support, score: nil, noData: true)
@@ -108,7 +136,7 @@ struct SleepView: View {
             light: stageAvg.map { SleepFormat.duration($0.light) } ?? "—",
             awake: stageAvg.map { SleepFormat.duration($0.awake) } ?? "—"
         )
-        CoachMessageCard(headline: coach.headline, body: coach.body, chips: coach.chips)
+        summaryCard(rangeSummary(range), fallback: coach)
     }
 }
 

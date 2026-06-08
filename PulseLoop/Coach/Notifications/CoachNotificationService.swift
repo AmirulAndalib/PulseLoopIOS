@@ -63,8 +63,8 @@ final class CoachNotificationService {
         let notification = await CoachNotificationGenerator.generate(
             slot: slot, packet: packet, flags: flags, client: clientFactory(apiKey ?? "")
         )
-        record(notification, slot: slot, now: now)
-        await deliver(notification)
+        let conversation = record(notification, slot: slot, now: now)
+        await deliver(notification, conversationId: conversation.id)
         return .sent(slot)
     }
 
@@ -107,18 +107,24 @@ final class CoachNotificationService {
 
     // MARK: - Record + deliver
 
-    func record(_ notification: CoachNotification, slot: CoachNotificationSlot, now: Date) {
+    @discardableResult
+    func record(_ notification: CoachNotification, slot: CoachNotificationSlot, now: Date) -> CoachConversation {
         modelContext.insert(CoachNotificationRecord(
             slot: slot, dateKey: CoachNotificationRecord.dateKey(for: now),
             title: notification.title, body: notification.body
         ))
         let convo = dailyCheckinsConversation()
+        // Render as a structured card so the chip + card UI matches the rest of the coach.
+        let response = CoachResponse(responseType: .insight, title: notification.title,
+                                     summary: notification.body, confidence: .medium)
         modelContext.insert(CoachMessage(
             conversationId: convo.id, role: "assistant",
-            body: "\(notification.title)\n\n\(notification.body)", createdAt: now
+            body: "\(notification.title)\n\n\(notification.body)",
+            cardsJSON: response.encodedJSON(), createdAt: now
         ))
         convo.updatedAt = now
         try? modelContext.save()
+        return convo
     }
 
     /// The find-or-create "Daily check-ins" conversation, so tapping a
@@ -134,16 +140,16 @@ final class CoachNotificationService {
 
     static let dailyCheckinsTitle = "Daily check-ins"
 
-    private func deliver(_ notification: CoachNotification) async {
+    private func deliver(_ notification: CoachNotification, conversationId: UUID) async {
         let content = UNMutableNotificationContent()
         content.title = notification.title
         content.body = notification.body
         content.sound = .default
-        content.userInfo = [CoachNotificationService.userInfoKey: true]
+        content.userInfo = [CoachNotificationService.conversationIdKey: conversationId.uuidString]
         let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
         try? await UNUserNotificationCenter.current().add(request)
     }
 
-    /// userInfo flag the app delegate reads to deep-link a tap to the coach thread.
-    static let userInfoKey = "coach_daily_checkin"
+    /// userInfo key the app delegate reads to deep-link a tap to the coach thread.
+    static let conversationIdKey = "coach_conversation_id"
 }

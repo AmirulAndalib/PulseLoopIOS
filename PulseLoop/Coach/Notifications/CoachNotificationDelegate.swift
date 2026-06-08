@@ -1,14 +1,16 @@
 import Foundation
 import UserNotifications
 
-/// Shared deep-link state set when a daily check-in notification is tapped.
-/// `MainTabView` switches to the Coach tab and `CoachView` opens the
-/// "Daily check-ins" thread when `openDailyCheckins` flips true.
+/// Shared deep-link state. Setting `requestedConversationId` makes `MainTabView`
+/// switch to the Coach tab and `CoachView` open that conversation. Used by both
+/// daily-check-in notification taps and Today/Sleep summary-card taps.
 @MainActor
 @Observable
 final class CoachNavigation {
     static let shared = CoachNavigation()
-    var openDailyCheckins = false
+    var requestedConversationId: UUID?
+
+    func open(_ conversationId: UUID) { requestedConversationId = conversationId }
 }
 
 /// UNUserNotificationCenter delegate: shows check-ins while foreground and
@@ -26,8 +28,9 @@ final class CoachNotificationDelegate: NSObject, UNUserNotificationCenterDelegat
         didReceive response: UNNotificationResponse
     ) async {
         let info = response.notification.request.content.userInfo
-        if info[CoachNotificationService.userInfoKey] != nil {
-            await MainActor.run { CoachNavigation.shared.openDailyCheckins = true }
+        if let idString = info[CoachNotificationService.conversationIdKey] as? String,
+           let id = UUID(uuidString: idString) {
+            await MainActor.run { CoachNavigation.shared.open(id) }
         }
     }
 }

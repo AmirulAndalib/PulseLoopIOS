@@ -121,10 +121,10 @@ struct CoachView: View {
             if activeConversationId == nil {
                 activeConversationId = allMessages.last?.conversationId ?? conversations.first?.id
             }
-            if nav.openDailyCheckins { openDailyCheckins() }
+            if nav.requestedConversationId != nil { openRequestedConversation() }
         }
-        .onChange(of: nav.openDailyCheckins) { _, open in
-            if open { openDailyCheckins() }
+        .onChange(of: nav.requestedConversationId) { _, id in
+            if id != nil { openRequestedConversation() }
         }
         .sheet(isPresented: $showHistory) {
             CoachHistorySheet(conversations: conversations, activeId: activeConversationId) { id in
@@ -219,12 +219,13 @@ struct CoachView: View {
         title == "New chat" || title == "Today check-in"
     }
 
-    /// Open the "Daily check-ins" thread in response to a notification tap.
-    private func openDailyCheckins() {
-        if let convo = conversations.first(where: { $0.title == CoachNotificationService.dailyCheckinsTitle }) {
-            activeConversationId = convo.id
+    /// Open a specific conversation requested via deep-link (notification tap or
+    /// a Today/Sleep summary-card tap).
+    private func openRequestedConversation() {
+        if let id = nav.requestedConversationId {
+            activeConversationId = id
         }
-        nav.openDailyCheckins = false
+        nav.requestedConversationId = nil
     }
 
     private func newConversation() {

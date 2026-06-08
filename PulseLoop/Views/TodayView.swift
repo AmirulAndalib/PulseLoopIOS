@@ -4,13 +4,18 @@ import SwiftData
 struct TodayView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(RingSyncCoordinator.self) private var coordinator
+    @Query(filter: #Predicate<CoachSummary> { $0.kind == "today" }, sort: \CoachSummary.updatedAt, order: .reverse)
+    private var todaySummaries: [CoachSummary]
     @Binding var path: NavigationPath
     @Binding var selectedTab: MainTab
     @State private var measuring: MeasurementSheet.Kind?
 
+    private var summaryService: CoachSummaryService { CoachSummaryService(modelContext: modelContext) }
+
     var body: some View {
         let summary = MetricsService.buildTodaySummary(context: modelContext)
         let hero = TodayInsights.deriveHero(summary)
+        let coachSummary = todaySummaries.first { $0.scopeKey == CoachDataAccess.localDateString(Date()) }
         ScrollView {
             VStack(spacing: 16) {
                 HeroInsightCardView(title: hero.title, summary: hero.summary, chips: hero.chips)
@@ -75,12 +80,15 @@ struct TodayView: View {
                     )
                 }
 
-                Button { selectedTab = .coach } label: {
+                Button {
+                    if let coachSummary { summaryService.openInChat(coachSummary) } else { selectedTab = .coach }
+                } label: {
                     CoachMessageCard(
-                        headline: summary.calibration.isCalibrating ? "Baseline in progress" : "Want a recap?",
-                        body: summary.calibration.isCalibrating
+                        headline: coachSummary?.title ?? (summary.calibration.isCalibrating ? "Baseline in progress" : "Want a recap?"),
+                        body: coachSummary?.body ?? (summary.calibration.isCalibrating
                             ? "I can help explain what data is collected and what is still missing."
-                            : "Want a summary from the latest ring context? Tap to open the coach."
+                            : "Want a summary from the latest ring context? Tap to open the coach."),
+                        chips: coachSummary?.chips ?? []
                     )
                 }
                 .buttonStyle(.plain)
@@ -107,6 +115,7 @@ struct TodayView: View {
         }
         .background(PulseColors.background)
         .refreshable { await coordinator.pullToRefresh() }
+        .task { await summaryService.refreshTodayIfNeeded() }
         .sheet(item: Binding(get: { measuring.map(MeasuringItem.init) }, set: { measuring = $0?.kind })) { item in
             MeasurementSheet(kind: item.kind)
         }
