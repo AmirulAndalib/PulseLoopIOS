@@ -36,9 +36,9 @@ your sleep, heart rate, activity, and recovery.
 |---|---|---|
 | ![Today](screenshots/today%20page%201.PNG) | ![Coach](screenshots/LLM%20coach%20example%201.PNG) | ![Sleep](screenshots/sleep%20page%201.PNG) |
 
-| Activity | Vitals | Live Activity (Dynamic Island) |
+| Activity | Vitals | Workout Summary |
 |---|---|---|
-| ![Activity](screenshots/activity%20page%201.PNG) | ![Vitals](screenshots/vitals%20page%201.PNG) | ![Live Activity](screenshots/live%20activity%20recording%20dynamic%20island.PNG) |
+| ![Activity](screenshots/activity%20page%201.PNG) | ![Vitals](screenshots/vitals%20page%201.PNG) | ![Workout Summary](screenshots/activity%20recording-%20complete%201.PNG) |
 
 ---
 
