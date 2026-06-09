@@ -116,3 +116,16 @@ PulseLoop/
 PulseLoopLiveActivity/  Live Activity + Dynamic Island widget
 PulseLoopTests/         Unit tests
 ```
+
+---
+
+## License
+
+This project is licensed under
+[Creative Commons Attribution 4.0 International (CC BY 4.0)](LICENSE).
+
+You're free to share and adapt the work, including commercially, **as long as
+you give appropriate credit**. Please attribute:
+
+> PulseLoop by Saksham Bhutani — https://github.com/sakshambhutani/PulseLoop
+
