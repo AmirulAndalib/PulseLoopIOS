@@ -2,6 +2,8 @@
 
 ![PulseLoop](docs/thumbnail.png)
 
+📖 Read the detailed writeup on how the app works here: [sakshambhutani.xyz/projects/20_project](https://sakshambhutani.xyz/projects/20_project/)
+
 An LLM-native health app for iOS that turns a cheap Bluetooth "smart ring"
 (the generic Chinese `56ff` BLE ring sold under dozens of brands) into a
 real, conversational health tracker.
