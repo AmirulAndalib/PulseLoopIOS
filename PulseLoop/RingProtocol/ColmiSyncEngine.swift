@@ -60,6 +60,11 @@ final class ColmiSyncEngine: RingSyncEngine {
         writer?.enqueue(Data(encoder.readPref(ColmiCommandID.autoHRVPref)))
         writer?.enqueue(Data(encoder.readTempPref()))
         writer?.enqueue(Data(encoder.readGoals()))
+        // Enable all-day measurement so the ring actually accumulates data the big-data history can
+        // return (without these, SpO2/stress/HRV/temp history come back empty — e.g. spot SpO2 fails).
+        writer?.enqueue(Data(encoder.writePref(ColmiCommandID.autoSpo2Pref, enabled: true)))
+        writer?.enqueue(Data(encoder.writePref(ColmiCommandID.autoStressPref, enabled: true)))
+        writer?.enqueue(Data(encoder.writePref(ColmiCommandID.autoHRVPref, enabled: true)))
         // Kick off a full history sync after the settings handshake.
         startHistorySync()
     }
@@ -67,6 +72,8 @@ final class ColmiSyncEngine: RingSyncEngine {
     private func startHistorySync() {
         daysAgo = 0
         stage = .activity
+        // Zero the ring-history activity days we're about to re-sum, so re-syncs stay idempotent.
+        Task { await PulseEventBus.shared.publish(.activitySyncReset(sinceDaysAgo: 7)) }
         requestActivity()
     }
 
@@ -208,8 +215,15 @@ final class ColmiSyncEngine: RingSyncEngine {
         writer?.enqueue(Data(encoder.realtimeHeartRate(enable: false)))
     }
 
-    // Colmi all-day SpO2 is a background setting, not an on-demand stream; a manual single HR is the
-    // closest analog for a one-shot vitals read. SpO2 start/stop map to enabling the pref + a sync.
+    /// Spot HR uses the ring's manual single measurement (0x69) — the reply carries an error byte the
+    /// decoder maps to a sample or `.heartRateComplete` (no-reading). Realtime 0x1e is reserved for
+    /// the workout live stream.
+    func measureHeartRateSpot() {
+        writer?.enqueue(Data(encoder.manualHeartRate()))
+    }
+
+    // Colmi has no instant single-SpO2 reading; SpO2 is an all-day background metric. A "spot" SpO2
+    // fetches the all-day history (enabled on connect) so the latest sample surfaces.
     func startSpO2() {
         writer?.enqueue(encoder.bigDataSpo2())
     }

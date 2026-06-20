@@ -53,6 +53,10 @@ struct RingPacket {
 
 enum RingDecodedEvent: Sendable {
     case activityUpdate(timestamp: Date, steps: Int, distanceMeters: Double, calories: Double)
+    /// One intraday activity bucket (e.g. a Colmi quarter-hour history sample). Unlike the cumulative
+    /// `activityUpdate`, buckets are *summed* into the day — so live vs. history aggregate correctly.
+    /// Calories are intentionally omitted (the ring's calorie field is unverified).
+    case activityBucket(timestamp: Date, steps: Int, distanceMeters: Double)
     case heartRateSample(bpm: Int, timestamp: Date)
     case heartRateComplete(timestamp: Date)
     case spo2Progress(percent: Int?, timestamp: Date)
@@ -74,6 +78,7 @@ enum RingDecodedEvent: Sendable {
     var kind: String {
         switch self {
         case .activityUpdate: return "activity"
+        case .activityBucket: return "activity_bucket"
         case .heartRateSample: return "hr_sample"
         case .heartRateComplete: return "hr_complete"
         case .spo2Progress: return "spo2_progress"
@@ -109,6 +114,8 @@ enum RingDecodedEvent: Sendable {
         switch self {
         case let .activityUpdate(_, steps, distanceMeters, calories):
             return #"{"steps":\#(steps),"distance_m":\#(Int(distanceMeters)),"calories":\#(Int(calories))}"#
+        case let .activityBucket(_, steps, distanceMeters):
+            return #"{"steps":\#(steps),"distance_m":\#(Int(distanceMeters))}"#
         case let .heartRateSample(bpm, _):
             return #"{"bpm":\#(bpm)}"#
         case let .spo2Result(value, _):

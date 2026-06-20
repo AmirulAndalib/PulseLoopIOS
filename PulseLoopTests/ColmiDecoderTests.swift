@@ -211,6 +211,85 @@ final class ColmiDecoderTests: XCTestCase {
         }
         XCTAssertFalse(temps.isEmpty, "reassembled frame should decode")
     }
+
+    // MARK: Real captured R11 packets (from a diagnostics export)
+
+    /// The 7 real `0x43` activity buckets from the capture. Each is one quarter-hour bucket dated
+    /// 2026-06-17. We anchor `now` near that date so the freshness guard accepts them.
+    private static let realActivityBuckets = [
+        "432606174c06072d05e800a9000000a2",
+        "43260617480507a32a8406670500009d",
+        "4326061744040776133b037a02000018",
+        "432606174003074714290393020000ec",
+        "432606173c02077f231f06860400001c",
+        "432606172c010757000f000b0000002b",
+        "4326061728000798001b00130000007b",
+    ]
+    private var activityNow: Date {
+        var c = DateComponents(); c.year = 2026; c.month = 6; c.day = 18
+        return calendar.date(from: c) ?? Date()
+    }
+
+    func testRealActivityBucketsDecodeWithoutCalories() throws {
+        var totalSteps = 0
+        for hex in Self.realActivityBuckets {
+            let data = try XCTUnwrap(try? Data(hexString: hex))
+            let events = decoder.decodeHistory(data, day: activityNow, calendar: calendar, now: activityNow)
+            // Exactly one bucket, steps+distance only (no activityUpdate / calories).
+            XCTAssertEqual(events.count, 1)
+            guard case let .activityBucket(_, steps, _) = events.first else {
+                return XCTFail("expected activityBucket, got \(String(describing: events.first?.kind))")
+            }
+            totalSteps += steps
+        }
+        // Real day's steps sum to a sane ~5,145 (not the 1668 single-bucket "max" the old code showed).
+        XCTAssertEqual(totalSteps, 5145)
+    }
+
+    @MainActor
+    func testActivityBucketSummingIsIdempotentAcrossResync() throws {
+        let context = try TestSupport.makeContext()
+
+        func runSync() {
+            ActivityService.zeroRingActivityDays(sinceDaysAgo: 7, context: context)
+            for hex in Self.realActivityBuckets {
+                guard let data = try? Data(hexString: hex) else { continue }
+                let events = decoder.decodeHistory(data, day: activityNow, calendar: calendar, now: activityNow)
+                if case let .activityBucket(ts, steps, dist) = events.first {
+                    ActivityService.applyActivityBucket(date: ts, steps: steps, distanceMeters: dist, context: context)
+                }
+            }
+            try? context.save()
+        }
+
+        runSync()
+        let after1 = MetricsRepository.activityRows(context: context).map(\.steps).reduce(0, +)
+        runSync()   // re-sync the exact same packets
+        let after2 = MetricsRepository.activityRows(context: context).map(\.steps).reduce(0, +)
+
+        XCTAssertEqual(after1, 5145, "first sync sums buckets into the day")
+        XCTAssertEqual(after2, after1, "re-sync must not inflate (idempotent)")
+        // Calories are never summed from ring buckets.
+        let cal = MetricsRepository.activityRows(context: context).map(\.calories).reduce(0, +)
+        XCTAssertEqual(cal, 0)
+    }
+
+    func testRealtimeHeartRateNoReadingReply() {
+        // Real capture: we sent 1e01, the ring replied 9eee00… (not worn / no reading).
+        let frame = try! Data(hexString: "9eee000000000000000000000000008c")
+        let events = decoder.decodeNormal(frame)
+        // No heart-rate sample; a completion (no-reading) signal is fine.
+        XCTAssertFalse(events.contains { if case .heartRateSample = $0 { return true }; return false })
+    }
+
+    func testManualHeartRateOkAndError() {
+        // ok: 69 00 00 <bpm>
+        let okFrame = ColmiPacket.frame([ColmiCommandID.manualHeartRate, 0, 0, 72])
+        XCTAssertTrue(decoder.decodeNormal(okFrame).contains { if case let .heartRateSample(bpm, _) = $0 { return bpm == 72 }; return false })
+        // worn incorrectly: 69 00 01 <bpm> -> no sample
+        let errFrame = ColmiPacket.frame([ColmiCommandID.manualHeartRate, 0, 1, 72])
+        XCTAssertFalse(decoder.decodeNormal(errFrame).contains { if case .heartRateSample = $0 { return true }; return false })
+    }
 }
 
 /// A no-op command writer for driver tests.

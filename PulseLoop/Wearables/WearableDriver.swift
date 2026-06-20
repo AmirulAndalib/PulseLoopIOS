@@ -54,10 +54,20 @@ protocol RingSyncEngine: AnyObject {
     func handle(_ event: RingDecodedEvent)
 
     // App-facing actions (the façade `RingSyncCoordinator` drives these).
+
+    /// Start the *live/workout* HR stream (jring: 0x14; Colmi: realtime 0x1e + keepalive).
     func startHeartRate()
     func stopHeartRate()
+    /// One-shot *spot* HR measurement (jring: same as start; Colmi: manual 0x69). Defaults to the
+    /// live start/stop for engines that don't distinguish.
+    func measureHeartRateSpot()
     func startSpO2()
     func stopSpO2()
     func findDevice()
     func setGoal(steps: Int)
+}
+
+extension RingSyncEngine {
+    /// Default: a spot measurement is just the live start (jring has no separate manual command).
+    func measureHeartRateSpot() { startHeartRate() }
 }

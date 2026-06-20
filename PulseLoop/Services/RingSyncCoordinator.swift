@@ -135,7 +135,8 @@ final class RingSyncCoordinator {
         guard client.state == .connected else { hrState = .failed; return nil }
         hrState = .measuring
         latestHRValue = nil
-        engine?.startHeartRate()
+        // Spot reading: the engine picks the right command (jring live stream / Colmi manual 0x69).
+        engine?.measureHeartRateSpot()
         try? await Task.sleep(nanoseconds: hrMeasureSeconds * 1_000_000_000)
         engine?.stopHeartRate()
         try? await Task.sleep(nanoseconds: 1_000_000_000)

@@ -19,11 +19,21 @@ enum RingEventBridge {
     static let hrvRange: ClosedRange<Int> = 1...300
     /// Plausible skin/body temperature, in °C.
     static let temperatureRange: ClosedRange<Double> = 30...45
+    /// Sanity ceilings for one intraday activity bucket (~15 min): well above any human cadence so
+    /// only clearly-misframed packets are rejected.
+    static let maxBucketSteps = 5000
+    static let maxBucketDistance: Double = 6000   // metres
 
     static func events(for decoded: RingDecodedEvent, now: Date = Date()) -> [PulseEvent] {
         switch decoded {
         case let .activityUpdate(timestamp, steps, distanceMeters, calories):
             return [.activityUpdate(timestamp: timestamp, steps: steps, distanceMeters: distanceMeters, calories: calories)]
+
+        case let .activityBucket(timestamp, steps, distanceMeters):
+            // Guard against a misframed history packet painting a wild total: a single 15-min bucket
+            // can't realistically exceed these. Drop the bucket if it does.
+            guard (0...maxBucketSteps).contains(steps), (0...maxBucketDistance).contains(distanceMeters) else { return [] }
+            return [.activityBucket(timestamp: timestamp, steps: steps, distanceMeters: distanceMeters)]
 
         case let .heartRateSample(bpm, timestamp):
             guard hrRange.contains(bpm) else { return [] }

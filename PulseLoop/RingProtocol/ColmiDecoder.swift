@@ -23,16 +23,21 @@ struct ColmiDecoder {
             return [.battery(percent: Int(v[1]))]
 
         case ColmiCommandID.manualHeartRate:
-            // 69 <?> <errorCode> <bpm>
+            // 69 <?> <errorCode> <bpm>. errorCode: 0=ok, 1=worn incorrectly, 2=temporary/no data.
             let errorCode = v[2]
             let bpm = Int(v[3])
-            guard errorCode == 0, bpm > 0 else { return [.heartRateComplete(timestamp: now)] }
+            guard errorCode == 0, (30...220).contains(bpm) else { return [.heartRateComplete(timestamp: now)] }
             return [.heartRateSample(bpm: bpm, timestamp: now)]
 
         case ColmiCommandID.realtimeHeartRate:
+            // Reject the no-reading sentinel (0xee=238) and out-of-range noise.
             let bpm = Int(v[1])
-            guard bpm > 0 else { return [] }
+            guard (30...220).contains(bpm) else { return [] }
             return [.heartRateSample(bpm: bpm, timestamp: now)]
+
+        case ColmiCommandID.realtimeHeartRateError:
+            // Ring not worn / no reading available — surface completion, no sample.
+            return [.heartRateComplete(timestamp: now)]
 
         case ColmiCommandID.notification:
             return decodeNotification(v, now: now)
@@ -44,7 +49,7 @@ struct ColmiDecoder {
 
     /// Day-aware history decode, called by `ColmiSyncEngine` which tracks the current sync-day.
     /// HR/stress/HRV use the passed `day`; activity carries its own date in the frame.
-    func decodeHistory(_ data: Data, day: Date, calendar: Calendar = .current) -> [RingDecodedEvent] {
+    func decodeHistory(_ data: Data, day: Date, calendar: Calendar = .current, now: Date = Date()) -> [RingDecodedEvent] {
         guard let packet = ColmiPacket(validating: data) else { return [] }
         let v = packet.bytes
         switch v[0] {
@@ -55,7 +60,7 @@ struct ColmiDecoder {
         case ColmiCommandID.syncHRV:
             return decodeHRVHistory(v, day: day, calendar: calendar)
         case ColmiCommandID.syncActivity:
-            return decodeActivityHistory(v, calendar: calendar)
+            return decodeActivityHistory(v, calendar: calendar, now: now)
         default:
             return []
         }
@@ -152,24 +157,36 @@ struct ColmiDecoder {
         return events
     }
 
-    /// Activity history packet → one activity sample. **UNVERIFIED (GadgetBridge-derived):** BCD-ish
-    /// date bytes and `hour = byte/4` (nth quarter of day).
-    private func decodeActivityHistory(_ v: [UInt8], calendar: Calendar) -> [RingDecodedEvent] {
+    /// Activity history packet → one intraday **bucket** (quarter-hour). Verified against real R11
+    /// captures: each `0x43` carries one 15-min bucket, so we emit `.activityBucket` (summed per day)
+    /// rather than a cumulative `.activityUpdate`. Calories are intentionally omitted — the ring's
+    /// calorie field is unverified/implausible (e.g. 10,915 for a single bucket).
+    ///
+    /// Layout: `43 yy MM dd qh cur tot ca ca st st di di …` where yy/MM/dd are BCD-literal date bytes,
+    /// `qh = v[4]/4` is the nth-quarter-of-day hour, `cur/tot` are packet indices, and
+    /// steps=u16(9,10), distance=u16(11,12). **UNVERIFIED:** BCD date + quarter-hour encoding.
+    private func decodeActivityHistory(_ v: [UInt8], calendar: Calendar, now: Date = Date()) -> [RingDecodedEvent] {
+        // GadgetBridge uses these markers on the first data byte for "empty"/"initial" packets.
         let marker = Int(v[1])
-        guard marker != 0xff, marker != 0xf0 else { return [] }
+        guard marker != 0xff, marker != 0xf0, v.count >= 13 else { return [] }
+
         func hexLit(_ b: UInt8) -> Int { Int(String(format: "%02x", b)) ?? Int(b) }
         var comps = DateComponents()
         comps.year = 2000 + hexLit(v[1])
         comps.month = hexLit(v[2])
         comps.day = hexLit(v[3])
-        comps.hour = Int(v[4]) / 4
+        comps.hour = min(23, max(0, Int(v[4]) / 4))   // nth quarter of day, clamped to a valid hour
         comps.minute = 0
         comps.second = 0
         guard let ts = calendar.date(from: comps) else { return [] }
-        let calories = Double(ColmiBytes.u16(v[7], v[8]))
+        // Reject implausible dates (misframed packet / bad BCD): must be within the last ~8 days.
+        let lower = calendar.date(byAdding: .day, value: -8, to: now) ?? now
+        let upper = calendar.date(byAdding: .hour, value: 1, to: now) ?? now
+        guard ts >= lower, ts <= upper else { return [] }
+
         let steps = ColmiBytes.u16(v[9], v[10])
         let distance = Double(ColmiBytes.u16(v[11], v[12]))
-        return [.activityUpdate(timestamp: ts, steps: steps, distanceMeters: distance, calories: calories)]
+        return [.activityBucket(timestamp: ts, steps: steps, distanceMeters: distance)]
     }
 
     // MARK: Big-data (V2) — called by the driver after reassembly

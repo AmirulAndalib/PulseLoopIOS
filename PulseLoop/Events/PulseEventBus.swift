@@ -10,6 +10,11 @@ enum PulseEvent: Sendable {
     case rawPacket(direction: PacketDirection, data: Data, decoded: RingDecodedEvent)
     case derivedUpdate(kind: String, entityType: String, entityId: String, payloadJSON: String?)
     case activityUpdate(timestamp: Date, steps: Int, distanceMeters: Double, calories: Double)
+    /// One intraday activity bucket (summed into its day, not ratcheted). Calories omitted.
+    case activityBucket(timestamp: Date, steps: Int, distanceMeters: Double)
+    /// Emitted when a fresh ring history sync begins, so persistence zeroes the days about to be
+    /// re-summed from buckets — keeps re-syncs idempotent (cleared data can't come back inflated).
+    case activitySyncReset(sinceDaysAgo: Int)
     case heartRateSample(bpm: Int, timestamp: Date)
     case heartRateComplete(timestamp: Date)
     case spo2Progress(percent: Int?, timestamp: Date)
@@ -138,6 +143,13 @@ final class EventPersistenceSubscriber {
                 entityId: row.id.uuidString,
                 payloadJSON: #"{"steps":\#(row.steps),"calories":\#(Int(row.calories)),"distance_m":\#(Int(row.distanceMeters))}"#
             ))
+        case let .activityBucket(timestamp, steps, distanceMeters):
+            // Per-quarter-hour ring history: sum into the day (calories omitted — unverified field).
+            ActivityService.applyActivityBucket(date: timestamp, steps: steps, distanceMeters: distanceMeters, context: context)
+        case let .activitySyncReset(sinceDaysAgo):
+            // A fresh ring history sync is starting; zero the days we're about to re-sum so re-syncs
+            // stay idempotent (cleared data can't reappear inflated).
+            ActivityService.zeroRingActivityDays(sinceDaysAgo: sinceDaysAgo, context: context)
         case let .heartRateSample(bpm, timestamp):
             persistMeasurement(kind: .heartRate, value: Double(bpm), timestamp: timestamp, source: .live, kindLabel: "hr_sample")
         case let .spo2Result(value, timestamp):

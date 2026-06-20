@@ -45,10 +45,13 @@ enum MetricsService {
             isDemo: isDemo
         )
         
+        // The ring's calorie field is unverified, so ring-history days don't carry calories — show
+        // "—" rather than a misleading 0. Steps/distance from the ring are trustworthy.
+        let todayCalories: Double? = today?.source == ActivityService.ringHistorySource ? nil : today?.calories
         return TodaySummary(
             date: today?.date ?? calendar.startOfDay(for: Date()),
             steps: today?.steps,
-            calories: today?.calories,
+            calories: todayCalories,
             distanceMeters: today?.distanceMeters,
             activeMinutes: today?.activeMinutes,
             activeMinutesSource: today?.source ?? "none",
@@ -567,6 +570,45 @@ enum ActivityService {
         row.syncedAt = update.syncedAt
         row.updatedAt = Date()
         return row
+    }
+
+    /// Tag for days whose totals are summed from ring history buckets (vs. live cumulative updates).
+    static let ringHistorySource = "ring_history"
+
+    /// Add one intraday activity **bucket** into its day. Unlike `applyActivityUpdate` (which ratchets
+    /// cumulative live totals with `max()`), buckets are *summed* — the ring sends ~96 quarter-hour
+    /// buckets per day and the daily total is their sum. Idempotency across re-syncs is provided by
+    /// `zeroRingActivityDays`, which clears these rows before a fresh history sync re-sums them.
+    /// Calories are intentionally not summed (the ring's calorie field is unverified).
+    @discardableResult
+    static func applyActivityBucket(date: Date, steps: Int, distanceMeters: Double, syncedAt: Date = Date(), context: ModelContext) -> ActivityDaily {
+        let row: ActivityDaily
+        if let existing = MetricsRepository.activity(on: date, context: context) {
+            row = existing
+        } else {
+            row = ActivityDaily(date: date, source: ringHistorySource)
+            context.insert(row)
+        }
+        row.steps += steps
+        row.distanceMeters += distanceMeters
+        row.source = ringHistorySource
+        row.syncedAt = syncedAt
+        row.updatedAt = Date()
+        return row
+    }
+
+    /// Zero out ring-history activity days within the recent window so a fresh history sync re-sums
+    /// from scratch instead of double-counting (the durable fix for "cleared data comes back").
+    /// Only touches rows we summed from buckets (`ringHistorySource`); live/demo rows are untouched.
+    static func zeroRingActivityDays(sinceDaysAgo: Int, context: ModelContext) {
+        let calendar = Calendar.current
+        let cutoff = calendar.date(byAdding: .day, value: -(sinceDaysAgo + 1), to: calendar.startOfDay(for: Date())) ?? Date.distantPast
+        for row in MetricsRepository.activityRows(context: context) where row.source == ringHistorySource && row.date >= cutoff {
+            row.steps = 0
+            row.distanceMeters = 0
+            row.calories = 0
+            row.updatedAt = Date()
+        }
     }
     
     static func computeActiveMinutes(for date: Date, context: ModelContext) -> ActiveMinutesResult {

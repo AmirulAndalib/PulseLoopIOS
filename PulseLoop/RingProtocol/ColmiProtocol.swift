@@ -30,6 +30,8 @@ enum ColmiCommandID {
     static let syncHeartRate: UInt8 = 0x15
     static let autoHRPref: UInt8 = 0x16
     static let realtimeHeartRate: UInt8 = 0x1e
+    /// Observed reply opcode when realtime HR has no reading (ring not worn): `0x1e | 0x80`, value 0xee.
+    static let realtimeHeartRateError: UInt8 = 0x9e
     static let goals: UInt8 = 0x21
     static let autoSpo2Pref: UInt8 = 0x2c
     static let packetSize: UInt8 = 0x2f

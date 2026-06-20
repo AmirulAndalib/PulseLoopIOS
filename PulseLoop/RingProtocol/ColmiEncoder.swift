@@ -49,6 +49,10 @@ struct ColmiEncoder {
     func battery() -> [UInt8] { [ColmiCommandID.battery] }
 
     func readPref(_ command: UInt8) -> [UInt8] { [command, ColmiCommandID.prefRead] }
+    /// Enable/disable an all-day measurement pref (SpO2 `0x2c`, stress `0x36`, HRV `0x38`).
+    func writePref(_ command: UInt8, enabled: Bool) -> [UInt8] {
+        [command, ColmiCommandID.prefWrite, enabled ? 0x01 : 0x00]
+    }
     /// Temperature pref has an extra `0x03` byte before the read/write flag.
     func readTempPref() -> [UInt8] { [ColmiCommandID.autoTempPref, 0x03, ColmiCommandID.prefRead] }
     func readGoals() -> [UInt8] { [ColmiCommandID.goals, ColmiCommandID.prefRead] }
