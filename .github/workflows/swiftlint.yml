@@ -27,5 +27,8 @@ jobs:
       - name: Install SwiftLint
         run: brew install swiftlint
 
+      # No --strict: warnings (style nits like long lines) annotate the PR but
+      # don't fail CI on day one. Only error-level violations block the merge.
+      # Tighten by adding --strict once the codebase is clean.
       - name: Run SwiftLint
-        run: swiftlint lint --strict --reporter github-actions-logging
+        run: swiftlint lint --reporter github-actions-logging

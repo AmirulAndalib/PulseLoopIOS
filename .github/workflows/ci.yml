@@ -40,23 +40,42 @@ jobs:
       - name: Install xcbeautify
         run: brew install xcbeautify
 
-      # Pick the newest booted-capable iPhone simulator available on the runner.
-      # The app targets a recent iOS, so we resolve the latest iOS runtime at
-      # build time instead of hard-coding a device/OS that an image bump may drop.
+      # New Xcode images on the runners don't always ship the iOS simulator
+      # runtime preinstalled, so the scheme reports "no iOS Simulator destinations"
+      # and a hand-picked UDID fails to match. Download the platform first so a
+      # generic `platform=iOS Simulator` destination resolves reliably.
+      - name: Ensure iOS simulator runtime
+        run: xcodebuild -downloadPlatform iOS
+
+      # Don't hard-code a device name/OS — Xcode image bumps rename the default
+      # iPhone and change the bundled iOS version. Resolve the newest available
+      # iPhone simulator and its iOS runtime from simctl after the download above.
       - name: Resolve simulator destination
         id: sim
         run: |
-          DEVICE=$(xcrun simctl list devices available --json \
-            | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; \
-              cands=[dev for runtime,devs in d.items() if 'iOS' in runtime for dev in devs \
-              if dev.get('isAvailable') and dev['name'].startswith('iPhone')]; \
-              cands.sort(key=lambda x: x['name']); \
-              print(cands[-1]['udid'] if cands else '')")
-          if [ -z "$DEVICE" ]; then
-            echo "No available iPhone simulator found"; exit 1
-          fi
-          echo "Using simulator UDID: $DEVICE"
-          echo "udid=$DEVICE" >> "$GITHUB_OUTPUT"
+          xcrun simctl list runtimes
+          DEST=$(xcrun simctl list devices available --json | python3 -c '
+          import json, sys
+          data = json.load(sys.stdin)["devices"]
+          best = None
+          for runtime, devices in data.items():
+              if "iOS" not in runtime:
+                  continue
+              # runtime id looks like com.apple.CoreSimulator.SimRuntime.iOS-26-4
+              ver = runtime.rsplit(".", 1)[-1].replace("iOS-", "").replace("-", ".")
+              for dev in devices:
+                  if dev.get("isAvailable") and dev["name"].startswith("iPhone"):
+                      key = (tuple(int(p) for p in ver.split(".") if p.isdigit()), dev["name"])
+                      if best is None or key > best[0]:
+                          best = (key, ver, dev["name"])
+          if best is None:
+              sys.stderr.write("No available iPhone simulator found\n")
+              sys.exit(1)
+          _, ver, name = best
+          print(f"platform=iOS Simulator,name={name},OS={ver}")
+          ')
+          echo "Using destination: $DEST"
+          echo "destination=$DEST" >> "$GITHUB_OUTPUT"
 
       - name: Build & run tests
         run: |
@@ -64,7 +83,7 @@ jobs:
           xcodebuild test \
             -project PulseLoop.xcodeproj \
             -scheme PulseLoop \
-            -destination "id=${{ steps.sim.outputs.udid }}" \
+            -destination "${{ steps.sim.outputs.destination }}" \
             -resultBundlePath TestResults.xcresult \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
