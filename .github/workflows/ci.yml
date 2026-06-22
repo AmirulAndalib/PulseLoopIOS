@@ -40,21 +40,16 @@ jobs:
       - name: Install xcbeautify
         run: brew install xcbeautify
 
-      # New Xcode images on the runners don't always ship the iOS simulator
-      # runtime preinstalled, so the scheme reports "no iOS Simulator destinations"
-      # and a hand-picked UDID fails to match. Download the platform first so a
-      # generic `platform=iOS Simulator` destination resolves reliably.
-      - name: Ensure iOS simulator runtime
-        run: xcodebuild -downloadPlatform iOS
-
-      # Don't hard-code a device name/OS — Xcode image bumps rename the default
-      # iPhone and change the bundled iOS version. Resolve the newest available
-      # iPhone simulator and its iOS runtime from simctl after the download above.
+      # Resolve whichever iPhone simulator + iOS runtime the runner image already
+      # ships, rather than hard-coding a device/OS that an image bump would drop.
+      # Only fall back to downloading a runtime if none is present — `xcodebuild
+      # -downloadPlatform iOS` is flaky on the hosted runners ("Unable to connect
+      # to simulator") and is unnecessary when a runtime already exists.
       - name: Resolve simulator destination
         id: sim
         run: |
-          xcrun simctl list runtimes
-          DEST=$(xcrun simctl list devices available --json | python3 -c '
+          resolve_dest() {
+            xcrun simctl list devices available --json | python3 -c '
           import json, sys
           data = json.load(sys.stdin)["devices"]
           best = None
@@ -68,14 +63,36 @@ jobs:
                       key = (tuple(int(p) for p in ver.split(".") if p.isdigit()), dev["name"])
                       if best is None or key > best[0]:
                           best = (key, ver, dev["name"])
-          if best is None:
-              sys.stderr.write("No available iPhone simulator found\n")
-              sys.exit(1)
-          _, ver, name = best
-          print(f"platform=iOS Simulator,name={name},OS={ver}")
-          ')
+          if best is not None:
+              _, ver, name = best
+              print(f"platform=iOS Simulator,name={name},OS={ver}")
+          '
+          }
+
+          echo "Installed iOS runtimes:"
+          xcrun simctl list runtimes | grep -i ios || true
+
+          DEST="$(resolve_dest)"
+          if [ -z "$DEST" ]; then
+            echo "No iOS simulator runtime found — downloading one (this can be slow/flaky)…"
+            xcodebuild -downloadPlatform iOS || true
+            DEST="$(resolve_dest)"
+          fi
+          if [ -z "$DEST" ]; then
+            echo "::error::No iOS simulator runtime available on this runner."
+            exit 1
+          fi
           echo "Using destination: $DEST"
           echo "destination=$DEST" >> "$GITHUB_OUTPUT"
+
+      # Pre-boot the resolved simulator so the test run doesn't race a cold device,
+      # and so a broken runtime fails here with a clear message rather than inside xcodebuild.
+      - name: Boot simulator
+        run: |
+          NAME="$(printf '%s' "${{ steps.sim.outputs.destination }}" | sed -E 's/.*name=([^,]+).*/\1/')"
+          echo "Booting: $NAME"
+          xcrun simctl boot "$NAME" || true
+          xcrun simctl bootstatus "$NAME" -b || true
 
       - name: Build & run tests
         run: |
