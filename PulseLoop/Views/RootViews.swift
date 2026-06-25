@@ -62,6 +62,24 @@ struct RootAppView: View {
                     RecordSummaryView(sessionId: id, path: $path)
                 case .settings:
                     SettingsView(path: $path)
+                case .settingsProfile:
+                    ProfileSettingsView()
+                case .settingsNotifications:
+                    NotificationsSettingsView()
+                case .settingsCoach:
+                    CoachSettingsDetailView()
+                case .settingsWearable:
+                    WearableSettingsView(path: $path)
+                case .settingsMeasurement:
+                    MeasurementSettingsView()
+                case .settingsActivityTracking:
+                    WorkoutSettingsView()
+                case .settingsVitals:
+                    VitalsSettingsView()
+                case .settingsPrivacyData:
+                    PrivacyDataSettingsView()
+                case .settingsAbout:
+                    AboutSettingsView()
                 case .pairing:
                     PairingView(onConnected: { path.removeLast() })
                 case .debug:
