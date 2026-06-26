@@ -213,6 +213,11 @@ final class GeminiClient: ResponsesClient, @unchecked Sendable {
         }
         if !tools.isEmpty {
             body["tools"] = tools
+            // VALIDATED mode validates function calls with constrained decoding —
+            // Gemini's equivalent of OpenAI strict mode. Without it Gemini omits
+            // required-but-empty fields (e.g. an empty `annotations` array, a
+            // `reason` string), which then fail our non-optional arg decoders.
+            body["toolConfig"] = ["functionCallingConfig": ["mode": "VALIDATED"]]
         }
 
         // Gemini rejects function declarations combined with a JSON response

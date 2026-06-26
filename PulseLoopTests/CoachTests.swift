@@ -411,6 +411,29 @@ final class GeminiClientTests: XCTestCase {
         let note = try XCTUnwrap(props["note"] as? [String: Any])
         XCTAssertEqual(note["type"] as? String, "string", "union type must collapse to a single type")
         XCTAssertEqual(note["nullable"] as? Bool, true, "null member must become nullable: true")
+
+        // Regression: VALIDATED mode (constrained decoding) must be requested when
+        // tools are present, so Gemini emits all required fields like OpenAI strict.
+        let toolConfig = try XCTUnwrap(json["toolConfig"] as? [String: Any])
+        let fcConfig = try XCTUnwrap(toolConfig["functionCallingConfig"] as? [String: Any])
+        XCTAssertEqual(fcConfig["mode"] as? String, "VALIDATED")
+    }
+
+    /// Tool-less turns (the structured-output / repair turn) must NOT set VALIDATED
+    /// — Gemini rejects toolConfig with no tools.
+    func testNoToolConfigWhenToolless() async throws {
+        StubURLProtocol.statusCode = 200
+        StubURLProtocol.responseBody = Data(#"{"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}"#.utf8)
+
+        let client = GeminiClient(apiKey: "AIza-test", session: session())
+        let body = try OpenAIRequestBuilder.data(
+            model: "gemini-2.5-flash", input: [], tools: [], textFormat: nil,
+            previousResponseId: nil, reasoningEffort: nil)
+        _ = try await client.send(requestBody: body)
+
+        let sent = try XCTUnwrap(StubURLProtocol.lastRequestBody)
+        let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: sent) as? [String: Any])
+        XCTAssertNil(json["toolConfig"], "toolConfig must be omitted on tool-less turns")
     }
 
     func testHTTPErrorThrows() async {
