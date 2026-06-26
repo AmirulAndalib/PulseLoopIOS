@@ -12,7 +12,9 @@ import Foundation
 /// agent turn (the orchestrator creates a fresh client per turn via the factory).
 final class GeminiClient: ResponsesClient, @unchecked Sendable {
     private let apiKey: String
-    private let model: String
+    // The model the orchestrator selected, taken from each request body's `model`
+    // field (see `send`); the init value is only a fallback if that's absent.
+    private var model: String
     private let session: URLSession
     private let baseURL = "https://generativelanguage.googleapis.com/v1beta/models"
 
@@ -35,6 +37,12 @@ final class GeminiClient: ResponsesClient, @unchecked Sendable {
 
         guard let req = try? JSONSerialization.jsonObject(with: requestBody) as? [String: Any] else {
             throw ResponsesError.decoding("GeminiClient: invalid request body")
+        }
+
+        // The orchestrator/services pass the user-selected model in the body
+        // (`flags.model`). Honor it so the picker in settings actually takes effect.
+        if let requestedModel = req["model"] as? String, !requestedModel.isEmpty {
+            model = requestedModel
         }
 
         let input = req["input"] as? [[String: Any]] ?? []

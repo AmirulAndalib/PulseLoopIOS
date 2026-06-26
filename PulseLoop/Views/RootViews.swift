@@ -62,6 +62,26 @@ struct RootAppView: View {
                     RecordSummaryView(sessionId: id, path: $path)
                 case .settings:
                     SettingsView(path: $path)
+                case .settingsProfile:
+                    ProfileSettingsView()
+                case .settingsNotifications:
+                    NotificationsSettingsView()
+                case .settingsCoach:
+                    CoachSettingsDetailView()
+                case .settingsWearable:
+                    WearableSettingsView(path: $path)
+                case .settingsMeasurement:
+                    MeasurementSettingsView()
+                case .settingsActivityTracking:
+                    WorkoutSettingsView()
+                case .settingsGoals:
+                    GoalsSettingsView()
+                case .settingsVitals:
+                    VitalsSettingsView()
+                case .settingsPrivacyData:
+                    PrivacyDataSettingsView()
+                case .settingsAbout:
+                    AboutSettingsView()
                 case .pairing:
                     PairingView(onConnected: { path.removeLast() })
                 case .debug:
@@ -87,6 +107,8 @@ struct RootAppView: View {
 
 struct MainTabView: View {
     @Binding var path: NavigationPath
+    @Environment(RingSyncCoordinator.self) private var coordinator
+    @Environment(\.modelContext) private var modelContext
     @State private var selected: MainTab
     @State private var nav = CoachNavigation.shared
     @State private var coachStore = CoachSettingsStore.shared
@@ -110,10 +132,16 @@ struct MainTabView: View {
     var body: some View {
         VStack(spacing: 0) {
             AppHeader(path: $path)
+            // Thin sync-progress accent directly under the greeting; only present while the ring
+            // is actively syncing so the user knows wearable data is still streaming in.
+            if coordinator.isSyncing {
+                SyncProgressBar()
+                    .transition(.opacity)
+            }
             ZStack(alignment: .bottom) {
                 TabView(selection: $selected) {
-                    TodayView(path: $path, selectedTab: $selected).tag(MainTab.today)
-                    VitalsView().tag(MainTab.vitals)
+                    TodayView(path: $path, selectedTab: $selected, isActive: selected == .today).tag(MainTab.today)
+                    VitalsView(isActive: selected == .vitals).tag(MainTab.vitals)
                     ActivityView(path: $path).tag(MainTab.activity)
                     SleepView().tag(MainTab.sleep)
                     if coachEnabled {
@@ -129,6 +157,7 @@ struct MainTabView: View {
             .ignoresSafeArea(.keyboard, edges: .bottom)
             .onChange(of: selected) { _, _ in UIApplication.shared.endEditing() }
         }
+        .animation(.easeInOut(duration: 0.25), value: coordinator.isSyncing)
         .onChange(of: nav.requestedConversationId) { _, id in
             if id != nil && coachEnabled { selected = .coach }  // CoachView opens the thread + resets the flag
         }
@@ -343,21 +372,39 @@ struct OnboardingFlowView: View {
 struct OnboardingWelcomeView: View {
     let next: () -> Void
     var body: some View {
-        OnboardingPage(title: "PulseLoop", subtitle: "Your ring data, activity, sleep, and coach in one native app.", systemImage: "circle.hexagongrid.circle.fill", actionTitle: "Get started", action: next)
+        OnboardingPage(
+            title: "PulseLoop",
+            subtitle: "Your ring data, activity, sleep, and coach in one native app.",
+            systemImage: "circle.hexagongrid.circle.fill",
+            actionTitle: "Get started",
+            action: next
+        )
     }
 }
 
 struct OnboardingProfileView: View {
     let next: () -> Void
     var body: some View {
-        OnboardingPage(title: "Set profile", subtitle: "Age, body metrics, and preferences help PulseLoop tune goals and summaries.", systemImage: "person.crop.circle", actionTitle: "Save profile", action: next)
+        OnboardingPage(
+            title: "Set profile",
+            subtitle: "Age, body metrics, and preferences help PulseLoop tune goals and summaries.",
+            systemImage: "person.crop.circle",
+            actionTitle: "Save profile",
+            action: next
+        )
     }
 }
 
 struct OnboardingBaselineView: View {
     let next: () -> Void
     var body: some View {
-        OnboardingPage(title: "Learning your baseline", subtitle: "Wear the ring through the day and sync after sleep so trends become personal.", systemImage: "chart.line.uptrend.xyaxis", actionTitle: "Continue", action: next)
+        OnboardingPage(
+            title: "Learning your baseline",
+            subtitle: "Wear the ring through the day and sync after sleep so trends become personal.",
+            systemImage: "chart.line.uptrend.xyaxis",
+            actionTitle: "Continue",
+            action: next
+        )
     }
 }
 

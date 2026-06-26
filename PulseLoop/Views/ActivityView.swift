@@ -7,7 +7,10 @@ struct ActivityView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(RingSyncCoordinator.self) private var coordinator
     @Query(sort: \ActivitySession.startedAt, order: .reverse) private var sessions: [ActivitySession]
+    @Query private var profiles: [UserProfile]
     @Binding var path: NavigationPath
+
+    private var units: UnitsPreference { profiles.first?.units ?? .metric }
 
     @State private var stepsRange: MetricRange = .sevenDays
     @State private var distanceRange: MetricRange = .sevenDays
@@ -109,10 +112,33 @@ struct ActivityView: View {
                 .buttonStyle(.plain)
 
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                    MetricCardButton(metric: "steps", label: "Steps", value: summary.steps.map { $0.formatted() } ?? "—", color: PulseColors.steps)
-                    MetricCardButton(metric: "calories", label: "Calories", value: summary.calories.map { Int($0).formatted() } ?? "—", unit: summary.calories == nil ? nil : "kcal", color: PulseColors.calories)
-                    MetricCardButton(metric: "distance", label: "Distance", value: summary.distanceMeters.map { String(format: "%.2f", $0 / 1000) } ?? "—", unit: summary.distanceMeters == nil ? nil : "km", color: PulseColors.distance)
-                    MetricCardButton(metric: "readiness", label: "Active min", value: summary.activeMinutes.map { "\($0)" } ?? "—", unit: summary.activeMinutes == nil ? nil : "min", color: PulseColors.readiness)
+                    MetricCardButton(
+                        metric: "steps",
+                        label: "Steps",
+                        value: summary.steps.map { $0.formatted() } ?? "—",
+                        color: PulseColors.steps
+                    )
+                    MetricCardButton(
+                        metric: "calories",
+                        label: "Calories",
+                        value: summary.calories.map { Int($0).formatted() } ?? "—",
+                        unit: summary.calories == nil ? nil : "kcal",
+                        color: PulseColors.calories
+                    )
+                    MetricCardButton(
+                        metric: "distance",
+                        label: "Distance",
+                        value: summary.distanceMeters.map { UnitsFormatter.distance(meters: $0, units: units).value } ?? "—",
+                        unit: summary.distanceMeters.map { _ in UnitsFormatter.distance(meters: 0, units: units).unit },
+                        color: PulseColors.distance
+                    )
+                    MetricCardButton(
+                        metric: "readiness",
+                        label: "Active min",
+                        value: summary.activeMinutes.map { "\($0)" } ?? "—",
+                        unit: summary.activeMinutes == nil ? nil : "min",
+                        color: PulseColors.readiness
+                    )
                 }
 
                 // Trend graphs with range toggles

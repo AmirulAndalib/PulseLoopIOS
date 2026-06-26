@@ -1,13 +1,12 @@
 import SwiftUI
 import SwiftData
-import UserNotifications
 
-/// "AI Coach" block for `SettingsView`: provider mode, model, API key
-/// (stored in Keychain), action/measurement toggles, daily notifications, and
-/// saved coach memory. Visuals reuse the existing design system.
+/// "AI Coach" block for `SettingsView`: provider mode, model, OpenAI/Gemini key
+/// (stored in Keychain), action/measurement toggles, and saved coach memory.
+/// Daily check-in notifications live in `NotificationsSettingsView`. Visuals
+/// reuse the existing design system.
 struct CoachSettingsSection: View {
     @Environment(\.modelContext) private var modelContext
-    @Environment(RingSyncCoordinator.self) private var coordinator
     @Query(sort: \CoachMemory.importance, order: .reverse) private var memories: [CoachMemory]
     @State private var store = CoachSettingsStore.shared
     private let openAIKeyStore = OpenAIKeychainStore()
@@ -24,9 +23,6 @@ struct CoachSettingsSection: View {
     @State private var hasGeminiKey: Bool = false
     @State private var showGeminiKey: Bool = false
     @State private var geminiKeyError: String?
-
-    @State private var notifPermissionDenied = false
-    @State private var testStatus: String?
 
     private var flags: CoachFeatureFlags {
         let hasKey = store.settings.providerMode == .userGeminiKey ? hasGeminiKey : hasSavedKey
@@ -89,11 +85,16 @@ struct CoachSettingsSection: View {
                 )
             }
 
-            toggleRow("Web search", isOn: webSearchBinding)
+            if store.settings.providerMode == .userGeminiKey {
+                // Web search is an OpenAI server-side tool with no Gemini equivalent
+                // wired up yet, so it's disabled (not silently no-op) in Gemini mode.
+                toggleRow("Web search", isOn: webSearchBinding, disabled: true,
+                          caption: "Web search is available with OpenAI only.")
+            } else {
+                toggleRow("Web search", isOn: webSearchBinding)
+            }
             toggleRow("AI actions (set goals, log, edit)", isOn: writeToolsBinding)
             toggleRow("Live ring measurements", isOn: liveMeasurementsBinding)
-
-            notificationsSection
 
             if !memories.isEmpty {
                 SectionHeader(title: "Coach memory", action: nil)
@@ -206,11 +207,19 @@ struct CoachSettingsSection: View {
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
     }
 
-    private func toggleRow(_ title: String, isOn: Binding<Bool>) -> some View {
-        Toggle(isOn: isOn) {
-            Text(title).font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textPrimary)
+    private func toggleRow(_ title: String, isOn: Binding<Bool>, disabled: Bool = false,
+                           caption: String? = nil) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Toggle(isOn: isOn) {
+                Text(title).font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textPrimary)
+            }
+            .tint(PulseColors.accent)
+            .disabled(disabled)
+            if let caption {
+                Text(caption).font(.caption).foregroundStyle(PulseColors.textMuted)
+            }
         }
-        .tint(PulseColors.accent)
+        .opacity(disabled ? 0.6 : 1)
         .padding(.horizontal, 16).padding(.vertical, 6)
         .background(PulseColors.card)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
@@ -260,70 +269,6 @@ struct CoachSettingsSection: View {
     }
     private var liveMeasurementsBinding: Binding<Bool> {
         Binding(get: { store.settings.enableLiveMeasurements }, set: { store.settings.enableLiveMeasurements = $0 })
-    }
-
-    // MARK: - Daily notifications
-
-    @ViewBuilder private var notificationsSection: some View {
-        toggleRow("Daily check-in notifications", isOn: Binding(
-            get: { store.settings.notificationsEnabled },
-            set: { setNotifications($0) }
-        ))
-
-        if store.settings.notificationsEnabled {
-            labeledRow("Morning") { hourPicker(hourBinding(\.morningHour)) }
-            labeledRow("Evening") { hourPicker(hourBinding(\.eveningHour)) }
-            QuickActionButton(label: "Send a test check-in now") { sendTestCheckin() }
-            if let testStatus {
-                Text(testStatus).font(.caption).foregroundStyle(PulseColors.textMuted)
-            }
-        }
-        if notifPermissionDenied {
-            Text("Notifications are disabled for PulseLoop in iOS Settings.")
-                .font(.caption).foregroundStyle(PulseColors.danger)
-        }
-    }
-
-    private func hourPicker(_ binding: Binding<Int>) -> some View {
-        Picker("Hour", selection: binding) {
-            ForEach(0..<24, id: \.self) { h in Text(String(format: "%02d:00", h)).tag(h) }
-        }
-        .pickerStyle(.menu)
-        .tint(PulseColors.accent)
-    }
-
-    private func hourBinding(_ keyPath: WritableKeyPath<CoachSettings, Int>) -> Binding<Int> {
-        Binding(
-            get: { store.settings[keyPath: keyPath] },
-            set: { store.settings[keyPath: keyPath] = $0; CoachNotificationScheduler.shared.scheduleNext() }
-        )
-    }
-
-    private func setNotifications(_ on: Bool) {
-        guard on else {
-            store.settings.notificationsEnabled = false
-            CoachNotificationScheduler.shared.cancel()
-            return
-        }
-        Task {
-            let granted = (try? await UNUserNotificationCenter.current()
-                .requestAuthorization(options: [.alert, .sound, .badge])) ?? false
-            store.settings.notificationsEnabled = granted
-            notifPermissionDenied = !granted
-            if granted { CoachNotificationScheduler.shared.scheduleNext() }
-        }
-    }
-
-    private func sendTestCheckin() {
-        testStatus = "Sending…"
-        let service = CoachNotificationService(modelContext: modelContext, coordinator: coordinator)
-        Task {
-            let outcome = await service.runDueSlot(force: true)
-            switch outcome {
-            case .sent(let slot): testStatus = "Sent a \(slot.label.lowercased()) check-in."
-            default: testStatus = "Couldn't send (\(outcome))."
-            }
-        }
     }
 
     // MARK: - Key actions

@@ -9,19 +9,37 @@ enum MetricsService {
     static func buildTodaySummary(context: ModelContext) -> TodaySummary {
         let calendar = Calendar.current
         let activityRows = MetricsRepository.activityRows(context: context)
-        let measurements = MetricsRepository.measurements(context: context)
         let device = DeviceRepository.current(context: context)
-        let isDemo = activityRows.contains { $0.source == "mock" } || measurements.contains { $0.sourceRaw == MeasurementSource.mock.rawValue }
+        // Demo detection via cheap predicated probes (no full-table scan). Matches the previous
+        // "any mock activity OR any mock measurement" semantics.
+        let isDemo = activityRows.contains { $0.source == "mock" } || MetricsRepository.hasMockMeasurement(context: context)
         let today = activityRows.sorted { $0.date < $1.date }.last
         let anchorDate = today?.date ?? calendar.startOfDay(for: Date())
         let alignedRows = alignedWeekActivity(rows: activityRows, anchor: isDemo ? anchorDate : Date())
-        let hrRows = measurements.filter { $0.kind == .heartRate }
-        let spo2Rows = measurements.filter { $0.kind == .spo2 }
+        // 24h HR/SpO₂ samples come from windowed DB queries (demo keeps full history, matching the
+        // old `includeAll`). `samplesSinceCutoff` re-applies the cutoff so semantics are identical.
+        let cutoff24h = calendar.date(byAdding: .hour, value: -24, to: Date()) ?? Date()
+        let hrRows = isDemo
+            ? MetricsRepository.measurementsAll(kind: .heartRate, context: context)
+            : MetricsRepository.measurements(kind: .heartRate, start: cutoff24h, end: Date(), context: context)
+        let spo2Rows = isDemo
+            ? MetricsRepository.measurementsAll(kind: .spo2, context: context)
+            : MetricsRepository.measurements(kind: .spo2, start: cutoff24h, end: Date(), context: context)
         let hrSamples = samplesSinceCutoff(rows: hrRows, range: .twentyFourHours, includeAll: isDemo)
         let spo2Samples = samplesSinceCutoff(rows: spo2Rows, range: .twentyFourHours, includeAll: isDemo)
-        let latestHR = hrRows.last
-        let latestSpO2 = spo2Rows.last
-        let calibration = calibrationState(device: device, activityRows: activityRows, measurements: measurements, isDemo: isDemo)
+        // Display copies for the Today sparklines respect the user's graph-resolution setting (the raw
+        // copies above stay untouched for stats/timeline below). Full resolution → identity.
+        let buckets24h = MetricPrefsStore.shared.settings.resolution.targetBuckets(for: .twentyFourHours)
+        let hrSamplesDisplay = MetricDownsampler.bucketAverage(hrSamples, targetBuckets: buckets24h)
+        let spo2SamplesDisplay = MetricDownsampler.bucketAverage(spo2Samples, targetBuckets: buckets24h)
+        // Latest values are the newest reading of each kind regardless of age (the old code took
+        // `.last` of the FULL kind history, not the 24h window) — fetch them independently so a
+        // last reading older than 24h still surfaces.
+        // Flatten the latest live readings to value snapshots immediately so nothing downstream
+        // (or the cached TodaySummary) holds a live SwiftData object.
+        let latestHR = LatestReading(MetricsRepository.latestMeasurement(kind: .heartRate, context: context))
+        let latestSpO2 = LatestReading(MetricsRepository.latestMeasurement(kind: .spo2, context: context))
+        let calibration = calibrationState(device: device, activityRows: activityRows, isDemo: isDemo, context: context)
         let hrFreshness = freshness(lastUpdatedAt: latestHR?.timestamp, isDemo: isDemo)
         let spo2Freshness = freshness(lastUpdatedAt: latestSpO2?.timestamp, isDemo: isDemo)
         let sleep = SleepService.latestSleep(context: context)
@@ -30,10 +48,10 @@ enum MetricsService {
             steps7d: alignedRows.map { DailyMetricPoint(date: $0.date, value: Double($0.steps)) },
             calories7d: alignedRows.map { DailyMetricPoint(date: $0.date, value: $0.calories) },
             distance7d: alignedRows.map { DailyMetricPoint(date: $0.date, value: $0.distanceMeters) },
-            hrSamples24h: hrSamples,
-            spo2Samples24h: spo2Samples
+            hrSamples24h: hrSamplesDisplay,
+            spo2Samples24h: spo2SamplesDisplay
         )
-        let metricStates = buildMetricStates(
+        let metricStates = buildMetricStates(MetricStateInputs(
             today: today,
             sleep: sleep,
             latestHR: latestHR,
@@ -43,7 +61,7 @@ enum MetricsService {
             activityRows: activityRows,
             calibration: calibration,
             isDemo: isDemo
-        )
+        ))
         
         // The ring's calorie field is unverified, so ring-history days don't carry calories — show
         // "—" rather than a misleading 0. Steps/distance from the ring are trustworthy.
@@ -63,14 +81,6 @@ enum MetricsService {
             batteryPercent: device?.batteryPercent ?? 0,
             deviceState: device?.state ?? .idle,
             trends: trends,
-            timeline: buildTimeline(
-                device: device,
-                today: today,
-                hrSamples: hrSamples,
-                spo2Samples: spo2Samples,
-                sleep: sleep,
-                context: context
-            ),
             metricStates: metricStates,
             calibration: calibration,
             goals: goals,
@@ -79,22 +89,27 @@ enum MetricsService {
     }
     
     static func metricRange(metric: MetricKey, range: MetricRange, context: ModelContext) -> [MetricSample] {
+        let raw: [MetricSample]
         switch metric {
         case .heartRate:
-            return rangeSamples(kind: .heartRate, range: range, context: context)
+            raw = rangeSamples(kind: .heartRate, range: range, context: context)
         case .spo2:
-            return rangeSamples(kind: .spo2, range: range, context: context)
+            raw = rangeSamples(kind: .spo2, range: range, context: context)
         case .stress:
-            return rangeSamples(kind: .stress, range: range, context: context)
+            raw = rangeSamples(kind: .stress, range: range, context: context)
         case .hrv:
-            return rangeSamples(kind: .hrv, range: range, context: context)
+            raw = rangeSamples(kind: .hrv, range: range, context: context)
         case .temperature:
-            return rangeSamples(kind: .temperature, range: range, context: context)
+            raw = rangeSamples(kind: .temperature, range: range, context: context)
         case .steps, .calories, .distance, .activeMinutes:
-            return activitySamples(metric: metric, range: range, context: context)
+            raw = activitySamples(metric: metric, range: range, context: context)
         default:
             return []
         }
+        // Display-only smoothing: bucket-average dense series per the user's resolution preference.
+        // `.full` (targetBuckets 0) is identity; raw stored rows are never modified.
+        let targetBuckets = MetricPrefsStore.shared.settings.resolution.targetBuckets(for: range)
+        return MetricDownsampler.bucketAverage(raw, targetBuckets: targetBuckets)
     }
     
     static func fetchMeasurements(_ context: ModelContext) -> [Measurement] {
@@ -116,10 +131,28 @@ enum MetricsService {
         return caps
     }
 
+    /// Capabilities of the device the UI should reason about *right now*. Prefers the live connection's
+    /// declared set (so plugging in a 56ff immediately hides Colmi-only controls), and falls back to the
+    /// last stored device row when nothing is connected.
+    static func activeCapabilities(context: ModelContext, ble: RingBLEClient?) -> Set<WearableCapability> {
+        if let ble, ble.state == .connected, !ble.activeCapabilities.isEmpty {
+            return ble.activeCapabilities
+        }
+        return deviceCapabilities(context)
+    }
+
     /// Whether a metric should be shown for the current device.
     static func supports(_ metric: MetricKey, context: ModelContext) -> Bool {
         guard let required = metric.requiredCapability else { return true }
         return deviceCapabilities(context).contains(required)
+    }
+
+    /// Whether a metric should be rendered right now: the device must support it (capability gate
+    /// **first**, so a hidden-but-unsupported vital can never be force-shown) AND the user must not have
+    /// hidden it. Every vitals call site funnels through this so visibility stays consistent app-wide.
+    static func isVisible(_ metric: MetricKey, context: ModelContext) -> Bool {
+        guard supports(metric, context: context) else { return false }
+        return !MetricPrefsStore.shared.isHidden(metric)
     }
     
     static func fetchDevices(_ context: ModelContext) -> [Device] {
@@ -154,9 +187,29 @@ enum MetricsService {
     }
     
     private static func rangeSamples(kind: MeasurementKind, range: MetricRange, context: ModelContext) -> [MetricSample] {
-        let rows = MetricsRepository.measurements(kind: kind, context: context)
-        let isDemo = rows.contains { $0.sourceRaw == MeasurementSource.mock.rawValue }
+        // Demo mode keeps full history (the old `includeAll`); otherwise fetch only the range window
+        // from the DB. Per-kind demo detection mirrors the old `rows.contains { mock }` (which only
+        // saw this kind's rows) so mixed real+demo databases behave identically.
+        let isDemo = MetricsRepository.hasMockMeasurement(kind: kind, context: context)
+        let rows: [Measurement]
+        if isDemo {
+            rows = MetricsRepository.measurementsAll(kind: kind, context: context)
+        } else {
+            rows = MetricsRepository.measurements(kind: kind, start: cutoff(for: range), end: Date(), limit: 5000, context: context)
+        }
         return samplesSinceCutoff(rows: rows, range: range, includeAll: isDemo)
+    }
+
+    /// Start date for a metric range window (mirrors `samplesSinceCutoff`'s non-demo cutoff so the
+    /// windowed fetch returns exactly the rows that filter would have kept).
+    private static func cutoff(for range: MetricRange) -> Date {
+        let cal = Calendar.current
+        switch range {
+        case .twentyFourHours: return cal.date(byAdding: .hour, value: -24, to: Date()) ?? Date()
+        case .sevenDays:       return cal.date(byAdding: .day, value: -7, to: Date()) ?? Date()
+        case .thirtyDays:      return cal.date(byAdding: .day, value: -30, to: Date()) ?? Date()
+        case .twelveMonths:    return cal.date(byAdding: .day, value: -365, to: Date()) ?? Date()
+        }
     }
     
     private static func activitySamples(metric: MetricKey, range: MetricRange, context: ModelContext) -> [MetricSample] {
@@ -240,7 +293,7 @@ enum MetricsService {
         }
     }
     
-    private static func calibrationState(device: Device?, activityRows: [ActivityDaily], measurements: [Measurement], isDemo: Bool) -> CalibrationState {
+    private static func calibrationState(device: Device?, activityRows: [ActivityDaily], isDemo: Bool, context: ModelContext) -> CalibrationState {
         if isDemo {
             return CalibrationState(isCalibrating: false, day: calibrationDays, totalDays: calibrationDays, startedAt: nil, reason: "Demo data active")
         }
@@ -248,7 +301,11 @@ enum MetricsService {
         if let lastConnected = device?.lastConnectedAt { candidates.append(lastConnected) }
         if let lastSync = device?.lastSyncAt { candidates.append(lastSync) }
         candidates.append(contentsOf: activityRows.compactMap(\.syncedAt))
-        candidates.append(contentsOf: measurements.map(\.timestamp))
+        // The earliest measurement timestamp anchors "day 1" — fetched as a single oldest row
+        // instead of mapping the whole table (semantics: still the global min measurement timestamp).
+        if let oldestMeasurement = MetricsRepository.oldestMeasurementTimestamp(context: context) {
+            candidates.append(oldestMeasurement)
+        }
         let started = candidates.min()
         let day: Int
         if let started {
@@ -281,17 +338,30 @@ enum MetricsService {
         return resting.min()
     }
     
-    private static func buildMetricStates(
-        today: ActivityDaily?,
-        sleep: SleepSummary?,
-        latestHR: Measurement?,
-        latestSpO2: Measurement?,
-        hrFreshness: DataFreshness,
-        spo2Freshness: DataFreshness,
-        activityRows: [ActivityDaily],
-        calibration: CalibrationState,
-        isDemo: Bool
-    ) -> [MetricKey: MetricState] {
+    /// Inputs for `buildMetricStates`, bundled to keep the call site readable.
+    private struct MetricStateInputs {
+        let today: ActivityDaily?
+        let sleep: SleepSummary?
+        let latestHR: LatestReading?
+        let latestSpO2: LatestReading?
+        let hrFreshness: DataFreshness
+        let spo2Freshness: DataFreshness
+        let activityRows: [ActivityDaily]
+        let calibration: CalibrationState
+        let isDemo: Bool
+    }
+
+    private static func buildMetricStates(_ inputs: MetricStateInputs) -> [MetricKey: MetricState] {
+        let today = inputs.today
+        let sleep = inputs.sleep
+        let latestHR = inputs.latestHR
+        let latestSpO2 = inputs.latestSpO2
+        let hrFreshness = inputs.hrFreshness
+        let spo2Freshness = inputs.spo2Freshness
+        let activityRows = inputs.activityRows
+        let calibration = inputs.calibration
+        let isDemo = inputs.isDemo
+
         let activityFreshness = freshness(lastUpdatedAt: today?.syncedAt, isDemo: isDemo)
         let activitySampleCount = activityRows.count
         return [
@@ -387,7 +457,7 @@ enum MetricsService {
         )
     }
     
-    private static func confidence(from measurement: Measurement?) -> MetricConfidence {
+    private static func confidence(from measurement: LatestReading?) -> MetricConfidence {
         switch measurement?.confidenceRaw {
         case DecodeConfidence.known.rawValue:
             return .high
@@ -425,37 +495,6 @@ enum MetricsService {
         return GoalsSummary(stepsDaily: 8000, activeMinutesDaily: 60, sleepHours: 7.5, exerciseDaysWeekly: 4)
     }
     
-    private static func buildTimeline(
-        device: Device?,
-        today: ActivityDaily?,
-        hrSamples: [MetricSample],
-        spo2Samples: [MetricSample],
-        sleep: SleepSummary?,
-        context: ModelContext
-    ) -> [TimelineEvent] {
-        var events: [TimelineEvent] = []
-        if let lastSyncAt = device?.lastSyncAt {
-            events.append(TimelineEvent(title: "Sync complete", detail: "Ring data updated", timestamp: lastSyncAt, metric: "sync"))
-        }
-        if let last = hrSamples.last {
-            events.append(TimelineEvent(title: "Heart rate", detail: "\(Int(last.value)) bpm", timestamp: last.timestamp, metric: "hr"))
-        }
-        if let last = spo2Samples.last {
-            events.append(TimelineEvent(title: "SpO2", detail: "\(Int(last.value)) %", timestamp: last.timestamp, metric: "spo2"))
-        }
-        if let today, today.activeMinutes > 0 {
-            let timestamp = today.syncedAt ?? Calendar.current.date(bySettingHour: 14, minute: 25, second: 0, of: today.date) ?? today.date
-            events.append(TimelineEvent(title: "Activity sync", detail: "\(min(today.activeMinutes, 22)) min active", timestamp: timestamp, metric: "activity"))
-        }
-        if let sleep {
-            events.append(TimelineEvent(title: "Sleep synced", detail: "\(sleep.session.totalMinutes / 60)h \(sleep.session.totalMinutes % 60)m", timestamp: sleep.session.endAt, metric: "sleep"))
-        }
-        let selfies = DebugRepository.queryPackets(filter: DebugPacketFilter(commandId: 0x06), context: context).prefix(3)
-        for packet in selfies {
-            events.append(TimelineEvent(title: "Gesture event", detail: "Decoded packet", timestamp: packet.timestamp, metric: "debug"))
-        }
-        return events.sorted { $0.timestamp > $1.timestamp }.prefix(8).map { $0 }
-    }
 }
 
 @MainActor
@@ -477,14 +516,14 @@ enum SleepService {
         return summary(for: session, includeStages: true, context: context)
     }
     
-    static func sleepRange(_ range: SleepRangeKey, context: ModelContext) -> SleepRangeSummary {
+    static func sleepRange(_ range: SleepRangeKey, context: ModelContext, now: Date = Date()) -> SleepRangeSummary {
         let expected = expectedNights(for: range)
         // Day view is "last night" — anchored on the current reference night, not
         // the latest recorded one. If nothing was captured we want to show the
         // empty state, not a stale night from days ago. Week/Month/Year keep the
         // last-recorded anchor so historical data still surfaces.
         let anchor = range == .day
-            ? dayReferenceNight(now: Date())
+            ? dayReferenceNight(now: now)
             : sleepAnchor(context: context)
         let start = Calendar.current.date(byAdding: .day, value: -(expected - 1), to: anchor) ?? anchor
         // End-of-day cap on the anchor so sessions stored mid-day are included.
@@ -575,30 +614,60 @@ enum ActivityService {
     /// Tag for days whose totals are summed from ring history buckets (vs. live cumulative updates).
     static let ringHistorySource = "ring_history"
 
-    /// Add one intraday activity **bucket** into its day. Unlike `applyActivityUpdate` (which ratchets
-    /// cumulative live totals with `max()`), buckets are *summed* — the ring sends ~96 quarter-hour
-    /// buckets per day and the daily total is their sum. Idempotency across re-syncs comes from
-    /// `resetDay: true` on the first bucket of each day in a sync run (replace, then sum). Calories are
-    /// intentionally not summed (the ring's calorie field is unverified).
+    /// One-time cleanup of `ActivityDaily` rows inflated by the old `+=` accumulator bug (steps that
+    /// compounded into the millions across repeated syncs). Deletes ring-history daily rows so they get
+    /// recomputed cleanly from buckets on the next sync. Idempotent + UserDefaults-gated so it runs once.
+    static func migrateInflatedActivityIfNeeded(context: ModelContext) {
+        let key = "activityBucketMigration.v1"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        for row in MetricsRepository.activityRows(context: context) where row.source == ringHistorySource {
+            context.delete(row)
+        }
+        try? context.save()
+        UserDefaults.standard.set(true, forKey: key)
+    }
+
+    /// Persist one intraday activity **bucket** from ring history (e.g. a Colmi quarter-hour `0x43`
+    /// sample) and recompute its day's total. The bucket is **upserted by its start time** into
+    /// `ActivityBucketSample`, so re-syncing the same bucket *replaces* it (never accumulates), and the
+    /// day's `ActivityDaily.steps/distance` is recomputed as the **sum of distinct buckets** for that
+    /// day. This is the GadgetBridge model and fixes daily totals drifting upward across repeated syncs.
+    /// Calories are intentionally not summed (the ring's calorie field is unverified).
     @discardableResult
-    static func applyActivityBucket(date: Date, steps: Int, distanceMeters: Double, resetDay: Bool = false, syncedAt: Date = Date(), context: ModelContext) -> ActivityDaily {
+    static func applyActivityBucket(date timestamp: Date, steps: Int, distanceMeters: Double, syncedAt: Date = Date(), context: ModelContext) -> ActivityDaily {
+        let dayStart = Calendar.current.startOfDay(for: timestamp)
+        let epoch = Int(timestamp.timeIntervalSince1970)
+
+        // Upsert the bucket sample by its unique start epoch (replace on re-sync).
+        if let existing = (try? context.fetch(FetchDescriptor<ActivityBucketSample>(
+            predicate: #Predicate { $0.startEpoch == epoch }
+        )))?.first {
+            existing.steps = steps
+            existing.distanceMeters = distanceMeters
+            existing.updatedAt = Date()
+        } else {
+            context.insert(ActivityBucketSample(timestamp: timestamp, steps: steps, distanceMeters: distanceMeters, source: ringHistorySource))
+        }
+        // Persist the upsert so the recompute fetch below reliably sees it (SwiftData fetches don't
+        // always include pending inserts).
+        try? context.save()
+
+        // Recompute the day's total from all its buckets (sum of distinct samples).
+        let buckets = (try? context.fetch(FetchDescriptor<ActivityBucketSample>(
+            predicate: #Predicate { $0.date == dayStart }
+        ))) ?? []
+        let totalSteps = buckets.reduce(0) { $0 + $1.steps }
+        let totalDistance = buckets.reduce(0.0) { $0 + $1.distanceMeters }
+
         let row: ActivityDaily
-        if let existing = MetricsRepository.activity(on: date, context: context) {
+        if let existing = MetricsRepository.activity(on: dayStart, context: context) {
             row = existing
         } else {
-            row = ActivityDaily(date: date, source: ringHistorySource)
+            row = ActivityDaily(date: dayStart, source: ringHistorySource)
             context.insert(row)
         }
-        // On the first bucket of a fresh sync run, replace the day's totals (don't accumulate across
-        // re-syncs). Subsequent buckets for the same day sum in. This keeps re-syncs idempotent without
-        // zeroing days up front (so a stalled sync can't blank a day that gets no data).
-        if resetDay {
-            row.steps = steps
-            row.distanceMeters = distanceMeters
-        } else {
-            row.steps += steps
-            row.distanceMeters += distanceMeters
-        }
+        row.steps = totalSteps
+        row.distanceMeters = totalDistance
         row.source = ringHistorySource
         row.syncedAt = syncedAt
         row.updatedAt = Date()
@@ -710,12 +779,10 @@ enum ActivityService {
     
     private static func backfillSamples(for session: ActivitySession, endedAt: Date, context: ModelContext) {
         let linked = Set(ActivityRepository.samples(sessionId: session.id, context: context).compactMap(\.measurementId))
-        let rows = MetricsRepository.measurements(context: context).filter { row in
-            (row.kind == .heartRate || row.kind == .spo2)
-            && row.timestamp >= session.startedAt
-            && row.timestamp <= endedAt
-            && !linked.contains(row.id)
-        }
+        // Windowed per-kind queries over the session's time span instead of scanning the whole table.
+        let hr = MetricsRepository.measurements(kind: .heartRate, start: session.startedAt, end: endedAt, limit: 10000, context: context)
+        let spo2 = MetricsRepository.measurements(kind: .spo2, start: session.startedAt, end: endedAt, limit: 10000, context: context)
+        let rows = (hr + spo2).filter { !linked.contains($0.id) }
         for row in rows {
             context.insert(ActivitySample(
                 sessionId: session.id,

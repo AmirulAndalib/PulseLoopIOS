@@ -31,7 +31,18 @@ enum PulseEvent: Sendable {
     case workoutPaused(UUID)
     case workoutResumed(UUID)
     case workoutFinished(UUID)
-    case gpsPoint(sessionId: UUID, latitude: Double, longitude: Double, altitude: Double?, horizontalAccuracy: Double?, speed: Double?, course: Double?, accepted: Bool, rejectionReason: String?, timestamp: Date)
+    case gpsPoint(
+        sessionId: UUID,
+        latitude: Double,
+        longitude: Double,
+        altitude: Double?,
+        horizontalAccuracy: Double?,
+        speed: Double?,
+        course: Double?,
+        accepted: Bool,
+        rejectionReason: String?,
+        timestamp: Date
+    )
     case coachTrace(String)
 }
 
@@ -65,14 +76,30 @@ actor PulseEventBus {
 final class EventPersistenceSubscriber {
     private let context: ModelContext
     private var task: Task<Void, Never>?
-    /// Days (midnight) whose ring-history activity total has been reset during the current sync run, so
-    /// each day is zeroed once on its first bucket rather than all days up front.
-    private var activityDaysResetThisRun: Set<Date> = []
+
+    #if DEBUG
+    /// Rolling cap for the DEBUG-only raw-packet trace, and how often we prune (every Nth insert,
+    /// so we don't pay a fetch on every packet during a sync burst).
+    private let rawPacketCap = 2_000
+    private let rawPacketPruneInterval = 200
+    private var rawPacketInsertsSincePrune = 0
+    #endif
+
+    /// Coalesced-save state. During a sync the ring streams hundreds of events; saving per event
+    /// woke every `@Query` hundreds of times (the re-render storm). Instead we insert/mutate without
+    /// saving, then flush (one `save()` + one "data changed" signal) after the stream briefly idles
+    /// or a hard cap of pending writes is reached.
+    private var pendingWrites = 0
+    private var flushTask: Task<Void, Never>?
+    /// Idle window after the last event before we flush a batch.
+    private let flushDebounceNanos: UInt64 = 300_000_000   // 0.3s
+    /// Hard ceiling so a long continuous stream still flushes periodically (never unbounded latency).
+    private let flushMaxPending = 100
 
     init(context: ModelContext) {
         self.context = context
     }
-    
+
     func start() {
         guard task == nil else { return }
         task = Task {
@@ -84,13 +111,54 @@ final class EventPersistenceSubscriber {
             }
         }
     }
-    
+
     func stop() {
+        flushTask?.cancel()
+        flushNow()
         task?.cancel()
         task = nil
     }
-    
+
+    /// Persist any pending batched writes immediately. Call on app background/suspend so a sync that
+    /// is mid-batch isn't lost.
+    func flush() {
+        flushNow()
+    }
+
     func persist(_ event: PulseEvent) {
+        applyPersist(event)
+        scheduleFlush()
+    }
+
+    /// Debounced batch flush: reset the idle timer each event; flush immediately if too many writes
+    /// have piled up. Coalesces a sync burst into a handful of saves + change signals.
+    private func scheduleFlush() {
+        pendingWrites += 1
+        if pendingWrites >= flushMaxPending {
+            flushNow()
+            return
+        }
+        flushTask?.cancel()
+        flushTask = Task { [weak self] in
+            let nanos = self?.flushDebounceNanos ?? 300_000_000
+            try? await Task.sleep(nanoseconds: nanos)
+            guard let self, !Task.isCancelled else { return }
+            self.flushNow()
+        }
+    }
+
+    /// Persist the accumulated batch and notify observers exactly once.
+    private func flushNow() {
+        flushTask?.cancel()
+        flushTask = nil
+        guard pendingWrites > 0 else { return }
+        pendingWrites = 0
+        try? context.save()
+        // One coalesced signal per batch; stores recompute once instead of per event.
+        PulseDataChange.shared.notify()
+    }
+
+    private func applyPersist(_ event: PulseEvent) {
         switch event {
         case let .deviceStateChanged(state, address):
             let device = MetricsService.fetchDevices(context).first ?? Device()
@@ -124,6 +192,13 @@ final class EventPersistenceSubscriber {
                     confidence: decoded.confidence
                 )
             )
+            // Keep the debug trace a rolling window so it can't grow without bound. Prune only
+            // every Nth insert to avoid a fetch on every packet during a sync burst.
+            rawPacketInsertsSincePrune += 1
+            if rawPacketInsertsSincePrune >= rawPacketPruneInterval {
+                rawPacketInsertsSincePrune = 0
+                DebugRepository.pruneRawPackets(maxRows: rawPacketCap, context: context)
+            }
             #endif
         case let .derivedUpdate(kind, entityType, entityId, payloadJSON):
             context.insert(DerivedUpdateRow(kind: kind, entityType: entityType, entityId: entityId, payloadJSON: payloadJSON))
@@ -147,17 +222,13 @@ final class EventPersistenceSubscriber {
                 payloadJSON: #"{"steps":\#(row.steps),"calories":\#(Int(row.calories)),"distance_m":\#(Int(row.distanceMeters))}"#
             ))
         case let .activityBucket(timestamp, steps, distanceMeters):
-            // Per-quarter-hour ring history: sum into the day (calories omitted — unverified field).
-            // Reset a day's total only on the *first* bucket seen for it this sync run, so a stalled or
-            // aborted sync never leaves a day zeroed-but-empty (idempotent re-sync without up-front wipe).
-            let dayKey = Calendar.current.startOfDay(for: timestamp)
-            let resetThisDay = !activityDaysResetThisRun.contains(dayKey)
-            if resetThisDay { activityDaysResetThisRun.insert(dayKey) }
-            ActivityService.applyActivityBucket(date: timestamp, steps: steps, distanceMeters: distanceMeters, resetDay: resetThisDay, context: context)
+            // Per-quarter-hour ring history: upserted by timestamp + the day total recomputed as the
+            // sum of distinct buckets, so re-syncs are idempotent (no drift). Calories omitted.
+            ActivityService.applyActivityBucket(date: timestamp, steps: steps, distanceMeters: distanceMeters, context: context)
         case .activitySyncReset:
-            // A fresh ring history sync is starting: clear the per-run reset tracking so each day gets
-            // zeroed once on its first incoming bucket (not all days up front).
-            activityDaysResetThisRun.removeAll()
+            // No longer needed — bucket upsert-by-timestamp makes re-syncs idempotent on its own.
+            // Kept as a no-op so the (still-published) event doesn't fall through to `unknown`.
+            break
         case let .heartRateSample(bpm, timestamp):
             persistMeasurement(kind: .heartRate, value: Double(bpm), timestamp: timestamp, source: .live, kindLabel: "hr_sample")
         case let .spo2Result(value, timestamp):
@@ -196,7 +267,7 @@ final class EventPersistenceSubscriber {
         case .heartRateComplete, .spo2Progress, .spo2Complete, .syncProgress, .workoutStarted, .workoutPaused, .workoutResumed, .workoutFinished, .coachTrace:
             break
         }
-        try? context.save()
+        // NB: no per-event save here — `scheduleFlush()` (called by `persist`) batches the save.
     }
     
     /// Persist one live/history measurement, record a derived-update audit row, and link it to

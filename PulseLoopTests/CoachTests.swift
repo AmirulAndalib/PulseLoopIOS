@@ -20,8 +20,26 @@ actor StubResponsesClient: ResponsesClient {
 final class StubURLProtocol: URLProtocol {
     nonisolated(unsafe) static var responseBody = Data()
     nonisolated(unsafe) static var statusCode = 200
+    nonisolated(unsafe) static var lastRequestURL: URL?
+    nonisolated(unsafe) static var lastRequestBody: Data?
 
-    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canInit(with request: URLRequest) -> Bool {
+        Self.lastRequestURL = request.url
+        Self.lastRequestBody = request.httpBody ?? request.httpBodyStream.flatMap { stream in
+            stream.open(); defer { stream.close() }
+            var data = Data()
+            let bufSize = 4096
+            let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufSize)
+            defer { buffer.deallocate() }
+            while stream.hasBytesAvailable {
+                let read = stream.read(buffer, maxLength: bufSize)
+                if read <= 0 { break }
+                data.append(buffer, count: read)
+            }
+            return data
+        }
+        return true
+    }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
         let response = HTTPURLResponse(url: request.url!, statusCode: Self.statusCode, httpVersion: nil, headerFields: nil)!
@@ -222,7 +240,7 @@ final class CoachOrchestratorTests: XCTestCase {
 
     func testMessageOnlyResponseIsParsed() async throws {
         let c = try TestSupport.makeContext()
-        let flags = CoachFeatureFlags(settings: .default, hasAPIKey: true)
+        let flags = CoachFeatureFlags(settings: TestSupport.enabledCoachSettings(), hasAPIKey: true)
         let stub = StubResponsesClient([OpenAIResponse(id: "r1", outputItems: [.message(text: validResponseJSON(title: "Hi"))])])
         let o = orchestrator(client: stub, flags: flags, context: c)
         let result = await o.runTurn(userText: "hi", packet: packet(c), recentMessages: [])
@@ -234,7 +252,7 @@ final class CoachOrchestratorTests: XCTestCase {
         let c = try TestSupport.makeContext()
         TestSupport.insertActivity(date: Date(), steps: 8200, into: c)
         let today = CoachDataAccess.localDateString(Date())
-        let flags = CoachFeatureFlags(settings: .default, hasAPIKey: true)
+        let flags = CoachFeatureFlags(settings: TestSupport.enabledCoachSettings(), hasAPIKey: true)
         let stub = StubResponsesClient([
             OpenAIResponse(id: "r1", outputItems: [.functionCall(.init(name: "get_daily_summary", callID: "c1", arguments: #"{"date":"\#(today)"}"#))]),
             OpenAIResponse(id: "r2", outputItems: [.message(text: validResponseJSON())]),
@@ -250,7 +268,7 @@ final class CoachOrchestratorTests: XCTestCase {
 
     func testUnparseableFinalFallsBack() async throws {
         let c = try TestSupport.makeContext()
-        let flags = CoachFeatureFlags(settings: .default, hasAPIKey: true)
+        let flags = CoachFeatureFlags(settings: TestSupport.enabledCoachSettings(), hasAPIKey: true)
         // Every response is junk → repair loop exhausts → fallback.
         let junk = OpenAIResponse(id: "x", outputItems: [.message(text: "not json")])
         let o = orchestrator(client: StubResponsesClient([junk, junk, junk, junk]), flags: flags, context: c)
@@ -299,4 +317,114 @@ final class OpenAIResponsesClientTests: XCTestCase {
 
 private extension CoachChart {
     static func decode(_ data: Data) -> CoachChart? { try? JSONDecoder().decode(CoachChart.self, from: data) }
+}
+
+// MARK: - Gemini client
+
+/// Verifies the Gemini adapter translates the app's OpenAI-Responses-shaped
+/// request/response to/from Gemini's `generateContent`, so every coach feature
+/// (tool calls, structured output) works on Gemini exactly as on OpenAI.
+final class GeminiClientTests: XCTestCase {
+    private func session() -> URLSession {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [StubURLProtocol.self]
+        return URLSession(configuration: config)
+    }
+
+    func testParsesFunctionCallAndText() async throws {
+        StubURLProtocol.statusCode = 200
+        StubURLProtocol.responseBody = Data("""
+        {"candidates":[{"content":{"parts":[
+          {"functionCall":{"name":"get_daily_summary","args":{"date":"2026-06-01"}}},
+          {"text":"hello"}
+        ]}}]}
+        """.utf8)
+
+        let client = GeminiClient(apiKey: "AIza-test", session: session())
+        let body = try OpenAIRequestBuilder.data(
+            model: "gemini-2.5-flash", input: [], tools: [], textFormat: nil,
+            previousResponseId: nil, reasoningEffort: nil)
+        let response = try await client.send(requestBody: body)
+
+        XCTAssertEqual(response.functionCalls.count, 1)
+        XCTAssertEqual(response.functionCalls.first?.name, "get_daily_summary")
+        XCTAssertTrue(response.functionCalls.first?.arguments.contains("2026-06-01") ?? false)
+        XCTAssertFalse(response.functionCalls.first?.callID.isEmpty ?? true)
+        XCTAssertEqual(response.outputText, "hello")
+    }
+
+    /// Regression test: the user-selected model in the request body must drive the
+    /// Gemini endpoint, not the client's hardcoded default.
+    func testUsesModelFromRequestBody() async throws {
+        StubURLProtocol.statusCode = 200
+        StubURLProtocol.responseBody = Data(#"{"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}"#.utf8)
+
+        let client = GeminiClient(apiKey: "AIza-test", session: session())
+        let body = try OpenAIRequestBuilder.data(
+            model: "gemini-2.5-pro", input: [], tools: [], textFormat: nil,
+            previousResponseId: nil, reasoningEffort: nil)
+        _ = try await client.send(requestBody: body)
+
+        let url = StubURLProtocol.lastRequestURL?.absoluteString ?? ""
+        XCTAssertTrue(url.contains("/models/gemini-2.5-pro:generateContent"),
+                      "expected gemini-2.5-pro endpoint, got \(url)")
+    }
+
+    /// The request the orchestrator builds carries OpenAI tool specs and a strict
+    /// JSON schema; the Gemini body must convert tools to `functionDeclarations`
+    /// and strip schema keywords Gemini rejects.
+    func testConvertsToolsAndCleansSchema() async throws {
+        StubURLProtocol.statusCode = 200
+        StubURLProtocol.responseBody = Data(#"{"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}"#.utf8)
+
+        let tool: [String: Any] = [
+            "type": "function",
+            "name": "get_metric_series",
+            "description": "series",
+            "parameters": [
+                "type": "object",
+                "additionalProperties": false,
+                "strict": true,
+                "properties": [
+                    "metric": ["type": "string"],
+                    "note": ["type": ["string", "null"]],
+                ],
+            ],
+        ]
+        let client = GeminiClient(apiKey: "AIza-test", session: session())
+        let body = try OpenAIRequestBuilder.data(
+            model: "gemini-2.5-flash", input: [], tools: [tool], textFormat: nil,
+            previousResponseId: nil, reasoningEffort: nil)
+        _ = try await client.send(requestBody: body)
+
+        let sent = try XCTUnwrap(StubURLProtocol.lastRequestBody)
+        let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: sent) as? [String: Any])
+        let tools = try XCTUnwrap(json["tools"] as? [[String: Any]])
+        let decls = try XCTUnwrap(tools.first?["functionDeclarations"] as? [[String: Any]])
+        let decl = try XCTUnwrap(decls.first)
+        XCTAssertEqual(decl["name"] as? String, "get_metric_series")
+
+        let params = try XCTUnwrap(decl["parameters"] as? [String: Any])
+        XCTAssertNil(params["additionalProperties"], "additionalProperties must be stripped")
+        XCTAssertNil(params["strict"], "strict must be stripped")
+        let props = try XCTUnwrap(params["properties"] as? [String: Any])
+        let note = try XCTUnwrap(props["note"] as? [String: Any])
+        XCTAssertEqual(note["type"] as? String, "string", "union type must collapse to a single type")
+        XCTAssertEqual(note["nullable"] as? Bool, true, "null member must become nullable: true")
+    }
+
+    func testHTTPErrorThrows() async {
+        StubURLProtocol.statusCode = 403
+        StubURLProtocol.responseBody = Data(#"{"error":"bad key"}"#.utf8)
+        let client = GeminiClient(apiKey: "AIza-test", session: session())
+        do {
+            let body = try OpenAIRequestBuilder.data(
+                model: "gemini-2.5-flash", input: [], tools: [], textFormat: nil,
+                previousResponseId: nil, reasoningEffort: nil)
+            _ = try await client.send(requestBody: body)
+            XCTFail("expected error")
+        } catch {
+            // expected
+        }
+    }
 }
