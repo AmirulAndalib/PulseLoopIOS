@@ -129,6 +129,36 @@ struct CoachSettingsSection: View {
             }
 
             toggleRow("Web search", isOn: webSearchBinding)
+
+            // OpenRouter-only routing controls. OpenRouter exposes a unified
+            // reasoning-effort hint plus provider-level privacy and sort options
+            // the native OpenAI/Gemini clients don't, so they only appear here.
+            if store.settings.providerMode == .userOpenRouterKey {
+                labeledRow("Reasoning") {
+                    Picker("Reasoning", selection: reasoningEffortBinding) {
+                        Text("Default").tag("")
+                        Text("Low").tag("low")
+                        Text("Medium").tag("medium")
+                        Text("High").tag("high")
+                    }
+                    .pickerStyle(.menu)
+                    .tint(PulseColors.accent)
+                }
+
+                toggleRow("Privacy routing", isOn: privacyRoutingBinding)
+
+                labeledRow("Provider sort") {
+                    Picker("Provider sort", selection: providerSortBinding) {
+                        Text("Default").tag("")
+                        Text("Price").tag("price")
+                        Text("Throughput").tag("throughput")
+                        Text("Latency").tag("latency")
+                    }
+                    .pickerStyle(.menu)
+                    .tint(PulseColors.accent)
+                }
+            }
+
             toggleRow("AI actions (set goals, log, edit)", isOn: writeToolsBinding)
             toggleRow("Live ring measurements", isOn: liveMeasurementsBinding)
 
@@ -344,6 +374,23 @@ struct CoachSettingsSection: View {
     }
     private var webSearchBinding: Binding<Bool> {
         Binding(get: { store.settings.enableWebSearch }, set: { store.settings.enableWebSearch = $0 })
+    }
+    /// `reasoningEffort` is optional; the picker uses "" for the "Default" (nil) tag.
+    private var reasoningEffortBinding: Binding<String> {
+        Binding(
+            get: { store.settings.reasoningEffort ?? "" },
+            set: { store.settings.reasoningEffort = $0.isEmpty ? nil : $0 }
+        )
+    }
+    private var privacyRoutingBinding: Binding<Bool> {
+        Binding(get: { store.settings.orEnablePrivacyRouting }, set: { store.settings.orEnablePrivacyRouting = $0 })
+    }
+    /// `orProviderSort` is optional; the picker uses "" for the "Default" (nil) tag.
+    private var providerSortBinding: Binding<String> {
+        Binding(
+            get: { store.settings.orProviderSort ?? "" },
+            set: { store.settings.orProviderSort = $0.isEmpty ? nil : $0 }
+        )
     }
     private var writeToolsBinding: Binding<Bool> {
         Binding(get: { store.settings.enableWriteTools }, set: { store.settings.enableWriteTools = $0 })

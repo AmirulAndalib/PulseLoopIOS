@@ -515,3 +515,145 @@ final class GeminiClientTests: XCTestCase {
                       "grounding sources must be carried into the follow-up turn")
     }
 }
+
+// MARK: - OpenRouterClient
+
+final class OpenRouterClientTests: XCTestCase {
+    private func session() -> URLSession {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [StubURLProtocol.self]
+        return URLSession(configuration: config)
+    }
+
+    private let okBody = Data(#"{"id":"gen-1","choices":[{"message":{"content":"ok"}}]}"#.utf8)
+
+    /// Decodes the body the client actually sent to OpenRouter.
+    private func sentBody() throws -> [String: Any] {
+        let data = try XCTUnwrap(StubURLProtocol.lastRequestBody)
+        return try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+
+    func testParsesContentAndToolCalls() async throws {
+        StubURLProtocol.statusCode = 200
+        StubURLProtocol.responseBody = Data("""
+        {"id":"gen-2","choices":[{"message":{"content":null,"tool_calls":[
+          {"id":"call_1","type":"function","function":{"name":"get_daily_summary","arguments":"{\\"date\\":\\"2026-06-01\\"}"}}
+        ]}}]}
+        """.utf8)
+
+        let client = OpenRouterClient(apiKey: "sk-or-v1-test", model: "anthropic/claude-sonnet-4.6", session: session())
+        let body = try OpenAIRequestBuilder.data(
+            model: "ignored-by-openrouter", input: [], tools: [], textFormat: nil,
+            previousResponseId: nil, reasoningEffort: nil)
+        let response = try await client.send(requestBody: body)
+
+        XCTAssertEqual(response.functionCalls.count, 1)
+        XCTAssertEqual(response.functionCalls.first?.name, "get_daily_summary")
+        XCTAssertEqual(response.functionCalls.first?.callID, "call_1")
+        XCTAssertTrue(response.functionCalls.first?.arguments.contains("2026-06-01") ?? false)
+    }
+
+    /// Web search: the hosted `web_search` tool spec must be dropped from the
+    /// function tools and instead route via the `:online` model suffix.
+    func testWebSearchAddsOnlineSuffixAndDropsHostedTool() async throws {
+        StubURLProtocol.statusCode = 200
+        StubURLProtocol.responseBody = okBody
+
+        let client = OpenRouterClient(apiKey: "sk-or-v1-test", model: "anthropic/claude-sonnet-4.6", session: session())
+        let body = try OpenAIRequestBuilder.data(
+            model: "x", input: [], tools: [["type": "web_search"]], textFormat: nil,
+            previousResponseId: nil, reasoningEffort: nil)
+        _ = try await client.send(requestBody: body)
+
+        let json = try sentBody()
+        XCTAssertEqual(json["model"] as? String, "anthropic/claude-sonnet-4.6:online")
+        // web_search is a hosted tool, not a function — it must not appear in tools.
+        XCTAssertNil(json["tools"], "hosted web_search must be dropped, not forwarded as a function tool")
+    }
+
+    func testNoWebSearchKeepsBareModelSlug() async throws {
+        StubURLProtocol.statusCode = 200
+        StubURLProtocol.responseBody = okBody
+
+        let client = OpenRouterClient(apiKey: "sk-or-v1-test", model: "anthropic/claude-sonnet-4.6", session: session())
+        let body = try OpenAIRequestBuilder.data(
+            model: "x", input: [], tools: [], textFormat: nil,
+            previousResponseId: nil, reasoningEffort: nil)
+        _ = try await client.send(requestBody: body)
+
+        XCTAssertEqual(try sentBody()["model"] as? String, "anthropic/claude-sonnet-4.6")
+    }
+
+    /// A user-typed Custom slug already ending in `:online` must not be doubled.
+    func testOnlineSuffixNotDoubled() async throws {
+        StubURLProtocol.statusCode = 200
+        StubURLProtocol.responseBody = okBody
+
+        let client = OpenRouterClient(apiKey: "sk-or-v1-test", model: "anthropic/claude-sonnet-4.6:online", session: session())
+        let body = try OpenAIRequestBuilder.data(
+            model: "x", input: [], tools: [["type": "web_search"]], textFormat: nil,
+            previousResponseId: nil, reasoningEffort: nil)
+        _ = try await client.send(requestBody: body)
+
+        XCTAssertEqual(try sentBody()["model"] as? String, "anthropic/claude-sonnet-4.6:online")
+    }
+
+    func testPrivacyRoutingAddsDataCollectionDeny() async throws {
+        StubURLProtocol.statusCode = 200
+        StubURLProtocol.responseBody = okBody
+
+        let client = OpenRouterClient(apiKey: "sk-or-v1-test", model: "x/y", privacyRouting: true, session: session())
+        let body = try OpenAIRequestBuilder.data(
+            model: "x", input: [], tools: [], textFormat: nil,
+            previousResponseId: nil, reasoningEffort: nil)
+        _ = try await client.send(requestBody: body)
+
+        let provider = try XCTUnwrap(try sentBody()["provider"] as? [String: Any])
+        XCTAssertEqual(provider["data_collection"] as? String, "deny")
+    }
+
+    func testProviderSortAndPrivacyMergeIntoOneProviderObject() async throws {
+        StubURLProtocol.statusCode = 200
+        StubURLProtocol.responseBody = okBody
+
+        let client = OpenRouterClient(
+            apiKey: "sk-or-v1-test", model: "x/y", privacyRouting: true, providerSort: "price", session: session())
+        let body = try OpenAIRequestBuilder.data(
+            model: "x", input: [], tools: [], textFormat: nil,
+            previousResponseId: nil, reasoningEffort: nil)
+        _ = try await client.send(requestBody: body)
+
+        let provider = try XCTUnwrap(try sentBody()["provider"] as? [String: Any])
+        XCTAssertEqual(provider["sort"] as? String, "price")
+        XCTAssertEqual(provider["data_collection"] as? String, "deny")
+    }
+
+    func testNoProviderObjectWhenRoutingUnset() async throws {
+        StubURLProtocol.statusCode = 200
+        StubURLProtocol.responseBody = okBody
+
+        let client = OpenRouterClient(apiKey: "sk-or-v1-test", model: "x/y", session: session())
+        let body = try OpenAIRequestBuilder.data(
+            model: "x", input: [], tools: [], textFormat: nil,
+            previousResponseId: nil, reasoningEffort: nil)
+        _ = try await client.send(requestBody: body)
+
+        XCTAssertNil(try sentBody()["provider"], "provider object must be omitted when no routing options are set")
+    }
+
+    /// Regression: the unified `reasoning` object the app builds must still be
+    /// forwarded as-is.
+    func testReasoningForwarded() async throws {
+        StubURLProtocol.statusCode = 200
+        StubURLProtocol.responseBody = okBody
+
+        let client = OpenRouterClient(apiKey: "sk-or-v1-test", model: "x/y", session: session())
+        let body = try OpenAIRequestBuilder.data(
+            model: "x", input: [], tools: [], textFormat: nil,
+            previousResponseId: nil, reasoningEffort: "high")
+        _ = try await client.send(requestBody: body)
+
+        let reasoning = try XCTUnwrap(try sentBody()["reasoning"] as? [String: Any])
+        XCTAssertEqual(reasoning["effort"] as? String, "high")
+    }
+}
