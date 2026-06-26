@@ -656,4 +656,47 @@ final class OpenRouterClientTests: XCTestCase {
         let reasoning = try XCTUnwrap(try sentBody()["reasoning"] as? [String: Any])
         XCTAssertEqual(reasoning["effort"] as? String, "high")
     }
+
+    /// Structured outputs: the Responses-API `text.format` schema must be sent as
+    /// Chat Completions `response_format` with `strict: true`, and the provider
+    /// object must carry `require_parameters: true` so OpenRouter only routes to
+    /// providers that actually enforce the schema.
+    func testStructuredOutputSendsResponseFormatAndRequireParameters() async throws {
+        StubURLProtocol.statusCode = 200
+        StubURLProtocol.responseBody = okBody
+
+        let client = OpenRouterClient(apiKey: "sk-or-v1-test", model: "x/y", session: session())
+        let body = try OpenAIRequestBuilder.data(
+            model: "x", input: [], tools: [], textFormat: CoachResponseSchema.textFormat,
+            previousResponseId: nil, reasoningEffort: nil)
+        _ = try await client.send(requestBody: body)
+
+        let json = try sentBody()
+        let rf = try XCTUnwrap(json["response_format"] as? [String: Any])
+        XCTAssertEqual(rf["type"] as? String, "json_schema")
+        let jsonSchema = try XCTUnwrap(rf["json_schema"] as? [String: Any])
+        XCTAssertEqual(jsonSchema["strict"] as? Bool, true)
+        XCTAssertEqual(jsonSchema["name"] as? String, "coach_response")
+        XCTAssertNotNil(jsonSchema["schema"] as? [String: Any], "the coach_response schema must be carried")
+
+        let provider = try XCTUnwrap(json["provider"] as? [String: Any])
+        XCTAssertEqual(provider["require_parameters"] as? Bool, true)
+    }
+
+    /// No `text.format` (e.g. a turn that doesn't constrain output) → no
+    /// `response_format` and no `require_parameters`-only provider object.
+    func testNoResponseFormatWhenNoSchema() async throws {
+        StubURLProtocol.statusCode = 200
+        StubURLProtocol.responseBody = okBody
+
+        let client = OpenRouterClient(apiKey: "sk-or-v1-test", model: "x/y", session: session())
+        let body = try OpenAIRequestBuilder.data(
+            model: "x", input: [], tools: [], textFormat: nil,
+            previousResponseId: nil, reasoningEffort: nil)
+        _ = try await client.send(requestBody: body)
+
+        let json = try sentBody()
+        XCTAssertNil(json["response_format"])
+        XCTAssertNil(json["provider"], "require_parameters must not be set without a schema to enforce")
+    }
 }
