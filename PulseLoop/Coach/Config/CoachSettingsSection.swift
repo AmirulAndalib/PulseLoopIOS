@@ -189,10 +189,15 @@ struct CoachSettingsSection: View {
     // MARK: - Small layout helpers
 
     private func labeledRow<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        HStack {
+        HStack(spacing: 8) {
             Text(title).font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textPrimary)
-            Spacer()
+                .fixedSize()
+            Spacer(minLength: 8)
+            // Let the picker keep its full label and grow the row height if needed,
+            // rather than getting compressed and clipped at the bottom.
             content()
+                .fixedSize()
+                .layoutPriority(1)
         }
         .padding(.horizontal, 16).padding(.vertical, 10)
         .background(PulseColors.card)
