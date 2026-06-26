@@ -46,40 +46,6 @@ enum PulseEvent: Sendable {
     case coachTrace(String)
 }
 
-extension PulseEvent {
-    /// Stable case name for perf counters (no associated values). Only consumed by
-    /// PerfTrace instrumentation; compiles to a dead pure helper when PERF_TRACE is off.
-    var perfLabel: String {
-        switch self {
-        case .deviceStateChanged: return "deviceStateChanged"
-        case .deviceIdentified: return "deviceIdentified"
-        case .batteryLevel: return "batteryLevel"
-        case .rawPacket: return "rawPacket"
-        case .derivedUpdate: return "derivedUpdate"
-        case .activityUpdate: return "activityUpdate"
-        case .activityBucket: return "activityBucket"
-        case .activitySyncReset: return "activitySyncReset"
-        case .heartRateSample: return "heartRateSample"
-        case .heartRateComplete: return "heartRateComplete"
-        case .spo2Progress: return "spo2Progress"
-        case .spo2Result: return "spo2Result"
-        case .spo2Complete: return "spo2Complete"
-        case .sleepTimeline: return "sleepTimeline"
-        case .historyMeasurement: return "historyMeasurement"
-        case .stressSample: return "stressSample"
-        case .hrvSample: return "hrvSample"
-        case .temperatureSample: return "temperatureSample"
-        case .syncProgress: return "syncProgress"
-        case .workoutStarted: return "workoutStarted"
-        case .workoutPaused: return "workoutPaused"
-        case .workoutResumed: return "workoutResumed"
-        case .workoutFinished: return "workoutFinished"
-        case .gpsPoint: return "gpsPoint"
-        case .coachTrace: return "coachTrace"
-        }
-    }
-}
-
 actor PulseEventBus {
     static let shared = PulseEventBus()
     
@@ -160,10 +126,7 @@ final class EventPersistenceSubscriber {
     }
 
     func persist(_ event: PulseEvent) {
-        PerfTrace.count("persist.\(event.perfLabel)", .event)
-        PerfTrace.measure("EventPersistenceSubscriber.persist", .event) {
-            _persist(event)
-        }
+        applyPersist(event)
         scheduleFlush()
     }
 
@@ -190,14 +153,12 @@ final class EventPersistenceSubscriber {
         flushTask = nil
         guard pendingWrites > 0 else { return }
         pendingWrites = 0
-        PerfTrace.measure("EventPersistenceSubscriber.flush", .event) {
-            try? context.save()
-        }
+        try? context.save()
         // One coalesced signal per batch; stores recompute once instead of per event.
         PulseDataChange.shared.notify()
     }
 
-    private func _persist(_ event: PulseEvent) {
+    private func applyPersist(_ event: PulseEvent) {
         switch event {
         case let .deviceStateChanged(state, address):
             let device = MetricsService.fetchDevices(context).first ?? Device()

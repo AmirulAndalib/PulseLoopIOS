@@ -28,7 +28,6 @@ struct TodayView: View {
     }
 
     var body: some View {
-        let _ = PerfTrace.renderTick("TodayView", Self.self)
         guard let activeStore = store else {
             // One pre-`.task` frame before the store is built: themed background, zero DB work.
             return AnyView(PulseColors.background.ignoresSafeArea().task { ensureStore() })

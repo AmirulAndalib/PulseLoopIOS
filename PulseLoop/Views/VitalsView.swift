@@ -17,7 +17,6 @@ struct VitalsView: View {
     private var units: UnitsPreference { profiles.first?.units ?? .metric }
 
     var body: some View {
-        let _ = PerfTrace.renderTick("VitalsView", Self.self)
         guard let activeStore = store else {
             // One pre-`.task` frame before the store is built: themed background, zero DB work.
             return AnyView(PulseColors.background.ignoresSafeArea().task { ensureStore() })
