@@ -13,10 +13,10 @@ hide:
 # PulseLoop
 
 <p class="pl-tagline">
-A $20 ring + an LLM, instead of a $300 subscription wearable.
-PulseLoop turns a cheap Bluetooth "smart ring" into a real,
-<b>local-first</b> health tracker with an optional conversational AI coach —
-and it runs on both <b>iOS</b> and <b>Android</b>.
+<b>Your health data, owned by you.</b>
+PulseLoop turns affordable wearables into a private, local-first health tracker with an optional AI coach —
+no subscription, no vendor cloud, no account.
+Available on <b>iOS</b> and <b>Android</b>.
 </p>
 
 <div class="pl-cta" markdown>
@@ -26,12 +26,6 @@ and it runs on both <b>iOS</b> and <b>Android</b>.
 </div>
 
 </div>
-
-!!! tip "Why PulseLoop exists"
-    The goal is to prove that a **$20 ring + an LLM** can replace a **$300
-    subscription wearable** — and that the "intelligence" should live on your
-    phone, not behind a paywall. No vendor cloud. No account. Your data stays on
-    your device.
 
 ---
 
