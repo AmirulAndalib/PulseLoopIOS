@@ -5,6 +5,7 @@ import Foundation
 /// and is treated as disabled until implemented.
 enum CoachProviderMode: String, Codable, CaseIterable, Identifiable {
     case offlineStub
+    case appleOnDevice
     case userOpenAIKey
     case userGeminiKey
     case userOpenRouterKey
@@ -15,6 +16,7 @@ enum CoachProviderMode: String, Codable, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .offlineStub: return "Offline"
+        case .appleOnDevice: return "On-device (Apple)"
         case .userOpenAIKey: return "OpenAI (your key)"
         case .userGeminiKey: return "Gemini (your key)"
         case .userOpenRouterKey: return "OpenRouter (your key)"
@@ -110,6 +112,10 @@ struct CoachSettings: Codable, Equatable {
     /// Off by default — users who only want metrics get a coach-free app.
     var coachMasterEnabled: Bool = false
     var providerMode: CoachProviderMode = .userOpenAIKey
+    /// Cloud backup for the on-device provider: when on-device is unavailable or a
+    /// generation fails, fall back to this provider (using its stored key). `nil`
+    /// = no backup. Only the key-based cloud providers are valid values.
+    var appleFallbackProvider: CoachProviderMode? = nil
     /// Default matches the web app; user-configurable (never hard-coded in the client).
     var model: String = CoachModel.gpt54.rawValue
     /// Optional reasoning effort hint ("low"/"medium"/"high") when the model supports it.
@@ -131,7 +137,12 @@ struct CoachSettings: Codable, Equatable {
     // Milestone D — automated daily check-in notifications.
     var notificationsEnabled: Bool = false
     var morningHour: Int = 8
+    var middayHour: Int = 13
     var eveningHour: Int = 19
+    /// Proactive, event-driven anomaly alerts (resting-HR drift, low SpO₂, poor
+    /// sleep). On-device only — free/unlimited local inference makes "watch the
+    /// stream and speak up when something looks off" practical. Off by default.
+    var proactiveAlertsEnabled: Bool = false
 
     /// The OpenRouter model slug to use. Free-form (the user may type any slug);
     /// falls back to the default only when the stored `model` is blank.
@@ -151,6 +162,7 @@ struct CoachSettings: Codable, Equatable {
         let d = CoachSettings.default
         coachMasterEnabled = try c.decodeIfPresent(Bool.self, forKey: .coachMasterEnabled) ?? d.coachMasterEnabled
         providerMode = try c.decodeIfPresent(CoachProviderMode.self, forKey: .providerMode) ?? d.providerMode
+        appleFallbackProvider = try c.decodeIfPresent(CoachProviderMode.self, forKey: .appleFallbackProvider)
         model = try c.decodeIfPresent(String.self, forKey: .model) ?? d.model
         reasoningEffort = try c.decodeIfPresent(String.self, forKey: .reasoningEffort)
         enableWebSearch = try c.decodeIfPresent(Bool.self, forKey: .enableWebSearch) ?? d.enableWebSearch
@@ -162,7 +174,9 @@ struct CoachSettings: Codable, Equatable {
         maxRounds = try c.decodeIfPresent(Int.self, forKey: .maxRounds) ?? d.maxRounds
         notificationsEnabled = try c.decodeIfPresent(Bool.self, forKey: .notificationsEnabled) ?? d.notificationsEnabled
         morningHour = try c.decodeIfPresent(Int.self, forKey: .morningHour) ?? d.morningHour
+        middayHour = try c.decodeIfPresent(Int.self, forKey: .middayHour) ?? d.middayHour
         eveningHour = try c.decodeIfPresent(Int.self, forKey: .eveningHour) ?? d.eveningHour
+        proactiveAlertsEnabled = try c.decodeIfPresent(Bool.self, forKey: .proactiveAlertsEnabled) ?? d.proactiveAlertsEnabled
     }
 }
 

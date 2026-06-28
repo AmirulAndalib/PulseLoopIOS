@@ -19,6 +19,10 @@ struct CoachFeatureFlags {
         switch settings.providerMode {
         case .offlineStub:
             return false
+        case .appleOnDevice:
+            // Ready when the local model is usable, or a cloud backup is set (its
+            // key is checked at resolve time; a missing key degrades to scripted).
+            return AppleOnDeviceAvailability.current.isAvailable || settings.appleFallbackProvider != nil
         case .userOpenAIKey, .userGeminiKey, .userOpenRouterKey:
             return hasAPIKey
         case .backendProxy:
@@ -40,6 +44,13 @@ struct CoachFeatureFlags {
         switch settings.providerMode {
         case .offlineStub:
             return "Offline — scripted replies only."
+        case .appleOnDevice:
+            let availability = AppleOnDeviceAvailability.current
+            if availability.isAvailable { return availability.statusMessage }
+            if let backup = settings.appleFallbackProvider {
+                return "On-device unavailable — using \(backup.label) backup."
+            }
+            return availability.statusMessage
         case .userOpenAIKey:
             return hasAPIKey ? "Ready · \(settings.model)" : "Add an OpenAI key to enable."
         case .userGeminiKey:
