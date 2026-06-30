@@ -7,7 +7,6 @@ struct VitalsView: View {
     /// we gate expensive rebuilds on visibility — an off-screen Vitals must not rebuild on every sync.
     let isActive: Bool
     @Environment(\.modelContext) private var modelContext
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(RingSyncCoordinator.self) private var coordinator
     @Query private var profiles: [UserProfile]
     @State private var measuring: MeasurementSheet.Kind?
@@ -23,33 +22,24 @@ struct VitalsView: View {
             return AnyView(PulseColors.background.ignoresSafeArea().task { ensureStore() })
         }
 
-        return AnyView(GeometryReader { geo in
-            let twoColumn = self.useTwoColumns(width: geo.size.width)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    headerBlock
-                    measureRow(activeStore)
-                    grid(activeStore, twoColumn: twoColumn)
-                }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 96)
+        return AnyView(ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                headerBlock
+                measureRow(activeStore)
+                grid(activeStore)
             }
-            .background(PulseColors.background)
-            .refreshable { await coordinator.pullToRefresh() }
-            .task { ensureStore(); if isActive { store?.updateProfile(profile) } }
-            .onChange(of: dataChange.token) { _, _ in if isActive { store?.refreshIfNeeded() } }
-            .onChange(of: isActive) { _, active in if active { store?.updateProfile(profile) } }
-            .onChange(of: profile?.updatedAt) { _, _ in store?.updateProfile(profile) }
-            .sheet(item: Binding(get: { measuring.map(VitalsMeasuringItem.init) }, set: { measuring = $0?.kind })) { item in
-                MeasurementSheet(kind: item.kind)
-            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 96)
+        }
+        .background(PulseColors.background)
+        .refreshable { await coordinator.pullToRefresh() }
+        .task { ensureStore(); if isActive { store?.updateProfile(profile) } }
+        .onChange(of: dataChange.token) { _, _ in if isActive { store?.refreshIfNeeded() } }
+        .onChange(of: isActive) { _, active in if active { store?.updateProfile(profile) } }
+        .onChange(of: profile?.updatedAt) { _, _ in store?.updateProfile(profile) }
+        .sheet(item: Binding(get: { measuring.map(VitalsMeasuringItem.init) }, set: { measuring = $0?.kind })) { item in
+            MeasurementSheet(kind: item.kind)
         })
-    }
-
-    /// Single column on narrow devices (iPhone SE) or large accessibility text; two otherwise.
-    private func useTwoColumns(width: CGFloat) -> Bool {
-        if dynamicTypeSize >= .accessibility1 { return false }
-        return width >= 380
     }
 
     // MARK: - Header & measure row
@@ -83,47 +73,30 @@ struct VitalsView: View {
 
     // MARK: - Grid
 
+    /// Single full-width column. Each card uses the full app width so values and charts stay legible.
     @ViewBuilder
-    private func grid(_ store: VitalsStore, twoColumn: Bool) -> some View {
-        let columns: [GridItem] = twoColumn
-            ? [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
-            : [GridItem(.flexible())]
+    private func grid(_ store: VitalsStore) -> some View {
         let physiology = UserPhysiologyProfile(profile)
 
-        LazyVGrid(columns: columns, spacing: 14) {
-            // Full-width chart cards.
-            fullWidth(twoColumn) { chartCard(store, .heartRate, physiology) }
-            fullWidth(twoColumn) { chartCard(store, .spo2, physiology, showPoints: true) }
-            fullWidth(twoColumn) { bpCard(store, physiology) }
-            fullWidth(twoColumn) { chartCard(store, .hrv, physiology) }
+        VStack(spacing: 14) {
+            chartCard(store, .heartRate, physiology)
+            chartCard(store, .spo2, physiology, showPoints: true)
+            bpCard(store, physiology)
+            chartCard(store, .hrv, physiology)
 
-            // Two-up compact gauges.
             if let stress = card(store, .stress) {
                 VitalGaugeCard(model: stress) { open(.stress) }
             }
             if let fatigue = card(store, .fatigue) {
                 VitalGaugeCard(model: fatigue) { open(.fatigue) }
             }
-
-            // Glucose: full-width gauge card.
             if let glucose = card(store, .glucose) {
-                fullWidth(twoColumn) { VitalGlucoseCard(model: glucose) { open(.glucose) } }
+                VitalGlucoseCard(model: glucose) { open(.glucose) }
             }
-
-            // Skin temperature (Colmi) — full-width chart.
+            // Skin temperature (Colmi).
             if store.visibleMetrics.contains(.temperature) {
-                fullWidth(twoColumn) { chartCard(store, .temperature, physiology) }
+                chartCard(store, .temperature, physiology)
             }
-        }
-    }
-
-    /// Wrap a card so it spans both columns when in two-column mode.
-    @ViewBuilder
-    private func fullWidth<V: View>(_ twoColumn: Bool, @ViewBuilder _ content: () -> V) -> some View {
-        if twoColumn {
-            content().gridCellColumns(2)
-        } else {
-            content()
         }
     }
 

@@ -69,4 +69,49 @@ final class ChartSampleSegmentTests: XCTestCase {
         ])
         XCTAssertEqual(out.map(\.value), [1, 2], "samples must be time-sorted")
     }
+
+    // MARK: - Zone-boundary line splitting
+
+    private func point(_ t: Double, _ v: Double) -> LinePoint {
+        LinePoint(time: Date(timeIntervalSince1970: t), value: v)
+    }
+
+    func testSplitAcrossSingleThreshold() {
+        // 35 → 44 across a 38 threshold splits into two pieces, crossing interpolated at 38.
+        let pieces = ZoneLineSplitter.split(point(0, 35), point(100, 44), thresholds: [38])
+        XCTAssertEqual(pieces.count, 2)
+        XCTAssertEqual(pieces[0].0.value, 35)
+        XCTAssertEqual(pieces[0].1.value, 38, accuracy: 0.0001)
+        XCTAssertEqual(pieces[1].0.value, 38, accuracy: 0.0001)
+        XCTAssertEqual(pieces[1].1.value, 44)
+        // Crossing time interpolated: (38-35)/(44-35) = 3/9 of the way → t ≈ 33.3s.
+        XCTAssertEqual(pieces[0].1.time.timeIntervalSince1970, 100.0 * 3.0 / 9.0, accuracy: 0.001)
+    }
+
+    func testWithinZonePairIsOnePiece() {
+        let pieces = ZoneLineSplitter.split(point(0, 40), point(100, 41), thresholds: [38, 42, 46])
+        XCTAssertEqual(pieces.count, 1)
+        XCTAssertEqual(pieces[0].0.value, 40)
+        XCTAssertEqual(pieces[0].1.value, 41)
+    }
+
+    func testTwoThresholdsYieldThreePieces() {
+        // 35 → 50 crossing 38 and 42 → three pieces in order.
+        let pieces = ZoneLineSplitter.split(point(0, 35), point(100, 50), thresholds: [38, 42])
+        XCTAssertEqual(pieces.count, 3)
+        XCTAssertEqual(pieces.map { $0.1.value }, [38, 42, 50], "split points ascend to the endpoint")
+    }
+
+    func testDescendingSegmentSplitsInOrder() {
+        // Falling line 50 → 35 crosses the same thresholds, split from high to low.
+        let pieces = ZoneLineSplitter.split(point(0, 50), point(100, 35), thresholds: [38, 42])
+        XCTAssertEqual(pieces.count, 3)
+        XCTAssertEqual(pieces.map { $0.1.value }, [42, 38, 35], "splits descend along the segment")
+    }
+
+    func testThresholdsAtEndpointsAreNotSplit() {
+        // A threshold exactly at an endpoint value should not create a zero-length piece.
+        let pieces = ZoneLineSplitter.split(point(0, 38), point(100, 44), thresholds: [38])
+        XCTAssertEqual(pieces.count, 1)
+    }
 }

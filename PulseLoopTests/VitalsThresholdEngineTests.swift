@@ -164,16 +164,64 @@ final class VitalsThresholdEngineTests: XCTestCase {
         XCTAssertEqual(severity(75, .fatigue, base), .high)
     }
 
-    // MARK: - Color token policy
+    // MARK: - Per-zone color palette
 
-    func testColorTokenStaysAccentInNormalRange() {
-        // A normal HR should use the metric accent (calm), not a zone color.
-        XCTAssertEqual(VitalsThresholdEngine.colorToken(forValue: 70, metric: .heartRate, profile: base), .metricAccent(.heartRate))
+    /// The colorToken the engine assigns to the zone a value lands in.
+    private func token(_ value: Double, _ metric: MetricKind, baseline: BaselineStats? = nil) -> VitalColorToken {
+        VitalsThresholdEngine.colorToken(forValue: value, metric: metric, profile: base, baseline: baseline)
     }
 
-    func testColorTokenShiftsOnExcursion() {
-        // A high SpO₂ excursion should leave the accent and take a zone color.
-        let token = VitalsThresholdEngine.colorToken(forValue: 88, metric: .spo2, profile: base)
-        XCTAssertNotEqual(token, .metricAccent(.spo2))
+    func testHeartRateZoneColors() {
+        XCTAssertEqual(token(45, .heartRate), .blue)                       // low
+        XCTAssertEqual(token(72, .heartRate), .metricAccent(.heartRate))   // normal = pink accent
+        XCTAssertEqual(token(110, .heartRate), .amber)                     // elevated
+        XCTAssertEqual(token(130, .heartRate), .red)                       // high
+    }
+
+    func testSpO2ZoneColors() {
+        XCTAssertEqual(token(98, .spo2), .cyan)     // normal
+        XCTAssertEqual(token(94, .spo2), .amber)    // slightly low
+        XCTAssertEqual(token(91, .spo2), .orange)   // low
+        XCTAssertEqual(token(86, .spo2), .red)      // very low
+    }
+
+    func testHRVZoneColorsUseAccentForNearBaseline() {
+        let baseline = makeBaseline(mean: 50, sd: 10, established: true)
+        XCTAssertEqual(token(50, .hrv, baseline: baseline), .metricAccent(.hrv)) // near = purple
+        XCTAssertEqual(token(58, .hrv, baseline: baseline), .mint)              // above
+        XCTAssertEqual(token(38, .hrv, baseline: baseline), .amber)             // below
+    }
+
+    func testStressAndFatigueZoneColors() {
+        XCTAssertEqual(token(10, .stress), .mint)
+        XCTAssertEqual(token(40, .stress), .cyan)
+        XCTAssertEqual(token(60, .stress), .amber)
+        XCTAssertEqual(token(90, .stress), .red)
+        XCTAssertEqual(token(90, .fatigue), .red)
+    }
+
+    func testBloodPressureZoneColors() {
+        // Via the systolic zones used by the gauge/legend.
+        let zones = VitalsThresholdEngine.zones(for: .bloodPressure, profile: base)
+        func colorAt(_ v: Double) -> VitalColorToken? { zones.first { $0.contains(v) }?.colorToken }
+        XCTAssertEqual(colorAt(110), .mint)    // normal
+        XCTAssertEqual(colorAt(125), .amber)   // elevated
+        XCTAssertEqual(colorAt(135), .orange)  // stage 1
+        XCTAssertEqual(colorAt(150), .red)     // stage 2
+    }
+
+    /// The line color at a value MUST equal the color of the zone that value falls in (line ↔ legend
+    /// agreement) — including normal values, where the old code diverged by using the accent specially.
+    func testLineColorMatchesContainingZoneEverywhere() {
+        for value in stride(from: 40.0, through: 160.0, by: 1.0) {
+            let zones = VitalsThresholdEngine.zones(for: .heartRate, profile: base)
+            let zoneToken = zones.first { $0.contains(value) }?.colorToken
+            XCTAssertEqual(token(value, .heartRate), zoneToken, "line vs legend mismatch at HR \(value)")
+        }
+    }
+
+    func testZoneThresholdsAreSortedBoundaries() {
+        let thresholds = VitalsThresholdEngine.zoneThresholds(for: .heartRate, profile: base)
+        XCTAssertEqual(thresholds, [60, 101, 120])   // the finite upper bounds, sorted
     }
 }

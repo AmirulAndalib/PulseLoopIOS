@@ -82,7 +82,7 @@ enum VitalsCardFactory {
             subtitleText: subtitle,
             samples: chart, zones: VitalsThresholdEngine.zones(for: .spo2, profile: profile),
             yDomain: 88...100,
-            referenceBands: [ReferenceBand(lower: 95, upper: 100, colorToken: .optimal)],
+            referenceBands: [ReferenceBand(lower: 95, upper: 100, colorToken: .cyan)],
             dashedRules: [92],
             trend: TrendSummary.compute(samples: chart, metric: .spo2, unitLabel: "%"),
             sourceQuality: quality, isEstimated: false, confidenceLabel: nil,
@@ -222,7 +222,7 @@ enum VitalsCardFactory {
             statusText: interp?.displayLabel ?? "No estimate", statusColor: interp?.statusColor ?? PulseColors.textMuted,
             subtitleText: "Estimated wellness metric",
             samples: chart, zones: VitalsThresholdEngine.zones(for: .glucose, profile: profile, context: unknownContext),
-            yDomain: domain, referenceBands: [ReferenceBand(lower: 70, upper: 140, colorToken: .normal)], dashedRules: [],
+            yDomain: domain, referenceBands: [ReferenceBand(lower: 70, upper: 140, colorToken: .mint)], dashedRules: [],
             trend: TrendSummary.compute(samples: chart, metric: .glucose, unitLabel: "mg/dL"),
             sourceQuality: quality, isEstimated: true, confidenceLabel: interp?.confidenceLabel,
             lastUpdatedText: lastUpdated(samples.last?.timestamp, now: inputs.now),
@@ -248,7 +248,8 @@ enum VitalsCardFactory {
         guard let normal = zones.first(where: { $0.severity == .normal }) else { return [] }
         let lower = normal.lower ?? domain.lowerBound
         let upper = normal.upper ?? domain.upperBound
-        return [ReferenceBand(lower: lower, upper: upper, colorToken: .normal)]
+        // Band reads from the normal zone's own token so it matches the line/legend exactly.
+        return [ReferenceBand(lower: lower, upper: upper, colorToken: normal.colorToken)]
     }
 
     private static func lastUpdated(_ date: Date?, now: Date) -> String? {

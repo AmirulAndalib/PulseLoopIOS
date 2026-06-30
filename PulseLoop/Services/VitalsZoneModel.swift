@@ -91,13 +91,16 @@ enum ZoneSeverity: Int, Comparable {
         return a.rawValue >= b.rawValue ? a : b
     }
 
-    var colorToken: VitalColorToken {
+    /// A neutral fallback token. Color is NOT derived from severity anymore — each `MetricZone`
+    /// carries its own explicit `colorToken` (the per-metric palette). Severity only orders zones
+    /// and drives the BP "worse-of" rule.
+    var fallbackColorToken: VitalColorToken {
         switch self {
-        case .optimal: return .optimal
-        case .normal: return .normal
-        case .watch: return .watch
-        case .high: return .high
-        case .critical: return .critical
+        case .optimal: return .mint
+        case .normal: return .cyan
+        case .watch: return .amber
+        case .high: return .orange
+        case .critical: return .red
         case .unknown: return .neutral
         }
     }
@@ -105,24 +108,31 @@ enum ZoneSeverity: Int, Comparable {
 
 // MARK: - Color tokens
 
-/// Semantic color token. The single `color` switch maps to `PulseColors` — never duplicate hex
-/// values elsewhere. `metricAccent` resolves to the metric's brand color (heart pink, oxygen cyan…).
+/// Explicit vitals color token. The single `color` switch maps to `PulseColors` — never duplicate
+/// hex elsewhere. Each `MetricZone` picks its token from this palette so the chart line, reference
+/// band, gauge arc, stat dot, and status label are always the same color for the same zone.
+/// `metricAccent` resolves to the metric's brand color (heart pink, HRV purple…) — used where a
+/// metric's "normal" zone should read as its own accent.
 enum VitalColorToken: Equatable {
-    case optimal
-    case normal
-    case watch
-    case high
-    case critical
-    case neutral
+    case blue          // low / cool
+    case mint          // optimal / typical
+    case cyan          // normal (where the accent isn't the normal color)
+    case amber         // caution
+    case softAmber     // slight caution
+    case orange        // elevated / low-oxygen / stage 1
+    case red           // high / critical
+    case neutral       // no information (building baseline)
     case metricAccent(MetricKind)
 
     var color: Color {
         switch self {
-        case .optimal: return PulseColors.success
-        case .normal: return PulseColors.info
-        case .watch: return PulseColors.warning
-        case .high: return PulseColors.warning
-        case .critical: return PulseColors.danger
+        case .blue: return PulseColors.zoneBlue
+        case .mint: return PulseColors.zoneMint
+        case .cyan: return PulseColors.zoneCyan
+        case .amber: return PulseColors.zoneAmber
+        case .softAmber: return PulseColors.zoneSoftAmber
+        case .orange: return PulseColors.zoneOrange
+        case .red: return PulseColors.zoneRed
         case .neutral: return PulseColors.textMuted
         case .metricAccent(let metric): return metric.accentColor
         }

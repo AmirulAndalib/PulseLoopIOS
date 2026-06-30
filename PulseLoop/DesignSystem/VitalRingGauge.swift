@@ -1,14 +1,27 @@
 import SwiftUI
 
-// Custom circular gauges for vitals. Built on `Shape`/`Canvas` rather than SwiftUI `Gauge` because
-// the multi-zone track and the blood-pressure dual ring need bespoke arc rendering. Colors resolve
-// through `VitalColorToken`/zones so a gauge matches its chart and legend exactly.
+// Custom gauges for vitals: a 270° open-bottom arc (gap at the bottom) with the metric's zones drawn
+// as colored arc segments, a value arc, and a marker centered on the stroke. Built on `Shape` rather
+// than SwiftUI `Gauge` because the multi-zone track and the BP dual ring need bespoke rendering.
+// Colors resolve through `VitalColorToken`/zones so a gauge matches its chart and legend exactly.
+
+/// Shared gauge geometry: a 270° sweep starting bottom-left, leaving a 90° gap centered at the
+/// bottom. `0°` is at 3 o'clock and angles increase clockwise (SwiftUI convention).
+private enum GaugeGeometry {
+    /// Start at 135° (bottom-left); sweep 270° clockwise to 405° (bottom-right).
+    static let startAngle: Double = 135
+    static let sweep: Double = 270
+
+    /// The on-screen angle for a 0…1 fraction along the arc.
+    static func angle(for fraction: Double) -> Angle {
+        .degrees(startAngle + sweep * max(0, min(1, fraction)))
+    }
+}
 
 // MARK: - Arc shape
 
-/// An arc spanning `startFraction…endFraction` of a full turn, measured clockwise from the top
-/// (12 o'clock). `inset` shrinks the radius so concentric rings (e.g. BP systolic/diastolic) don't
-/// overlap. Fractions are clamped to [0, 1].
+/// An arc spanning `startFraction…endFraction` of the 270° gauge sweep. `inset` shrinks the radius so
+/// concentric rings (BP systolic/diastolic) don't overlap. Fractions are clamped to [0, 1].
 struct RingSegment: Shape {
     let startFraction: Double
     let endFraction: Double
@@ -19,14 +32,11 @@ struct RingSegment: Shape {
         let radius = min(rect.width, rect.height) / 2 - inset
         guard radius > 0 else { return path }
         let center = CGPoint(x: rect.midX, y: rect.midY)
-        let start = max(0, min(1, startFraction))
-        let end = max(0, min(1, endFraction))
-        // -90° puts 0 at the top; full turn sweeps clockwise.
         path.addArc(
             center: center,
             radius: radius,
-            startAngle: .degrees(-90 + 360 * start),
-            endAngle: .degrees(-90 + 360 * end),
+            startAngle: GaugeGeometry.angle(for: startFraction),
+            endAngle: GaugeGeometry.angle(for: endFraction),
             clockwise: false
         )
         return path
@@ -35,8 +45,9 @@ struct RingSegment: Shape {
 
 // MARK: - Single-value gauge
 
-/// A full-circle gauge: muted zone arcs in the track, a bright value arc, a marker dot, and a center
-/// stack (value / unit / status). Sized large for full-width cards, small for compact two-up cards.
+/// A 270° gauge: muted zone arcs in the track, a bright value arc, a marker dot centered on the
+/// stroke, and a center stack (value / unit / status). The value lives only here (the card chrome
+/// does not repeat it).
 struct VitalRingGauge: View {
     let value: Double
     let domain: ClosedRange<Double>
@@ -57,30 +68,29 @@ struct VitalRingGauge: View {
 
     var body: some View {
         ZStack {
-            // Track
-            Circle()
+            // Track (the full 270° arc).
+            RingSegment(startFraction: 0, endFraction: 1)
                 .stroke(PulseColors.elevated, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
 
-            // Muted zone arcs across the bounded part of each zone.
+            // Muted zone arcs.
             ForEach(zones) { zone in
                 let lower = fraction(zone.lower ?? domain.lowerBound)
                 let upper = fraction(zone.upper ?? domain.upperBound)
                 if upper > lower {
                     RingSegment(startFraction: lower, endFraction: upper)
-                        .stroke(zone.color.opacity(0.30), style: StrokeStyle(lineWidth: lineWidth, lineCap: .butt))
+                        .stroke(zone.color.opacity(0.32), style: StrokeStyle(lineWidth: lineWidth, lineCap: .butt))
                 }
             }
 
-            // Value arc from the bottom-ish origin up to the current value.
+            // Value arc from the start up to the current value.
             RingSegment(startFraction: 0, endFraction: fraction(value))
                 .stroke(valueColor, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
 
-            // Marker dot at the current value.
             markerDot
 
             VStack(spacing: 2) {
                 Text(centerValue)
-                    .font(.system(size: size * 0.26, weight: .semibold, design: .rounded))
+                    .font(.system(size: size * 0.30, weight: .semibold, design: .rounded))
                     .monospacedDigit()
                     .foregroundStyle(PulseColors.textPrimary)
                     .contentTransition(.numericText())
@@ -89,32 +99,33 @@ struct VitalRingGauge: View {
                 }
                 if let centerStatus {
                     Text(centerStatus.uppercased())
-                        .font(.system(size: size * 0.075, weight: .semibold)).tracking(1.0)
+                        .font(.system(size: size * 0.08, weight: .semibold)).tracking(1.0)
                         .foregroundStyle(valueColor)
                 }
                 if let subtitle {
                     Text(subtitle).font(.system(size: size * 0.065)).foregroundStyle(PulseColors.textMuted)
                 }
             }
-            .padding(lineWidth + 4)
         }
         .frame(width: size, height: size)
     }
 
+    /// Marker centered on the stroke centerline (`r = size/2 - lineWidth/2`), at the same angle basis
+    /// as the arcs — this is what keeps it sitting cleanly on the ring.
     private var markerDot: some View {
-        let angle = Angle.degrees(-90 + 360 * fraction(value))
+        let angle = GaugeGeometry.angle(for: fraction(value))
         let r = size / 2 - lineWidth / 2
         return Circle()
             .fill(PulseColors.textPrimary)
-            .frame(width: lineWidth * 0.5, height: lineWidth * 0.5)
+            .frame(width: lineWidth * 0.55, height: lineWidth * 0.55)
             .offset(x: r * cos(angle.radians), y: r * sin(angle.radians))
     }
 }
 
 // MARK: - Dual-ring gauge (blood pressure)
 
-/// Two concentric ring gauges for blood pressure: outer = systolic, inner = diastolic, each on its
-/// own domain and zones. The center shows `122/78` and the worse-of-the-two category.
+/// Two concentric 270° gauges: outer = systolic, inner = diastolic, each on its own domain and zones.
+/// Center shows `122/78` and the worse-of-the-two category. Each ring carries a marker.
 struct DualVitalRingGauge: View {
     let systolic: Double
     let diastolic: Double
@@ -133,18 +144,19 @@ struct DualVitalRingGauge: View {
         return max(0, min(1, (v - domain.lowerBound) / span))
     }
 
+    private var innerInset: CGFloat { lineWidth + 8 }
+
     var body: some View {
         ZStack {
-            ringTrack(inset: 0)
-            zoneArcs(systolicZones, domain: systolicDomain, inset: 0)
-            RingSegment(startFraction: 0, endFraction: fraction(systolic, systolicDomain), inset: 0)
-                .stroke(PulseColors.bloodPressure, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+            // Outer ring = systolic.
+            ring(zones: systolicZones, domain: systolicDomain, value: systolic, inset: 0,
+                 valueColor: PulseColors.bloodPressure)
+            marker(fraction: fraction(systolic, systolicDomain), inset: 0)
 
-            let innerInset = lineWidth + 8
-            ringTrack(inset: innerInset)
-            zoneArcs(diastolicZones, domain: diastolicDomain, inset: innerInset)
-            RingSegment(startFraction: 0, endFraction: fraction(diastolic, diastolicDomain), inset: innerInset)
-                .stroke(PulseColors.bloodPressure.opacity(0.7), style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+            // Inner ring = diastolic.
+            ring(zones: diastolicZones, domain: diastolicDomain, value: diastolic, inset: innerInset,
+                 valueColor: PulseColors.bloodPressure.opacity(0.7))
+            marker(fraction: fraction(diastolic, diastolicDomain), inset: innerInset)
 
             VStack(spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: 2) {
@@ -162,19 +174,29 @@ struct DualVitalRingGauge: View {
         .frame(width: size, height: size)
     }
 
-    private func ringTrack(inset: CGFloat) -> some View {
+    @ViewBuilder
+    private func ring(zones: [MetricZone], domain: ClosedRange<Double>, value: Double,
+                      inset: CGFloat, valueColor: Color) -> some View {
         RingSegment(startFraction: 0, endFraction: 1, inset: inset)
             .stroke(PulseColors.elevated, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
-    }
-
-    private func zoneArcs(_ zones: [MetricZone], domain: ClosedRange<Double>, inset: CGFloat) -> some View {
         ForEach(zones) { zone in
             let lower = fraction(zone.lower ?? domain.lowerBound, domain)
             let upper = fraction(zone.upper ?? domain.upperBound, domain)
             if upper > lower {
                 RingSegment(startFraction: lower, endFraction: upper, inset: inset)
-                    .stroke(zone.color.opacity(0.28), style: StrokeStyle(lineWidth: lineWidth, lineCap: .butt))
+                    .stroke(zone.color.opacity(0.30), style: StrokeStyle(lineWidth: lineWidth, lineCap: .butt))
             }
         }
+        RingSegment(startFraction: 0, endFraction: fraction(value, domain), inset: inset)
+            .stroke(valueColor, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+    }
+
+    private func marker(fraction: Double, inset: CGFloat) -> some View {
+        let angle = GaugeGeometry.angle(for: fraction)
+        let r = size / 2 - inset - lineWidth / 2
+        return Circle()
+            .fill(PulseColors.textPrimary)
+            .frame(width: lineWidth * 0.5, height: lineWidth * 0.5)
+            .offset(x: r * cos(angle.radians), y: r * sin(angle.radians))
     }
 }

@@ -76,6 +76,15 @@ enum PulseColors {
     static let bloodPressure = Color(hex: "#FF6B9D")
     static let bloodSugar = Color(hex: "#FFB84D")
     static let fatigue = Color(hex: "#C77DFF")
+    // Vitals reference-zone palette. These are the ONLY colors a zone may use, so the chart line,
+    // reference band, gauge arc, stat dot, and status label are always identical for the same zone.
+    static let zoneBlue = Color(hex: "#4DA3FF")     // low / cool
+    static let zoneMint = Color(hex: "#35E0A1")     // optimal / typical
+    static let zoneCyan = Color(hex: "#4DDCFF")     // normal (SpO₂/stress)
+    static let zoneAmber = Color(hex: "#FFB86B")    // caution
+    static let zoneSoftAmber = Color(hex: "#FFD9A0") // slight caution (distinct from amber)
+    static let zoneOrange = Color(hex: "#FF8A4C")   // elevated / low-oxygen / stage 1
+    static let zoneRed = Color(hex: "#FF4D6D")      // high / critical
     static let borderSubtle = Color.white.opacity(0.08)
     static let borderStrong = Color.white.opacity(0.16)
 }

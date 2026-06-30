@@ -83,14 +83,16 @@ struct MetricDetailView: View {
                     showPoints: metric == .spo2,
                     showAxes: true,
                     dashedRules: dashedRules(baseline: baseline),
-                    height: 220,
+                    height: 320,
+                    thresholds: VitalsThresholdEngine.zoneThresholds(for: metric, profile: profile, baseline: baseline),
                     colorForValue: { value in
                         VitalsThresholdEngine.colorToken(forValue: value, metric: metric, profile: profile, baseline: baseline).color
                     }
                 )
             }
         }
-        .padding(16)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
         .background(PulseColors.card, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
     }
@@ -195,7 +197,7 @@ struct MetricDetailView: View {
 
     private func detailBands(baseline: BaselineStats?) -> [ReferenceBand] {
         switch metric {
-        case .spo2: return [ReferenceBand(lower: 95, upper: 100, colorToken: .optimal)]
+        case .spo2: return [ReferenceBand(lower: 95, upper: 100, colorToken: .cyan)]
         case .hrv:
             guard let baseline, baseline.isEstablished else { return [] }
             let half = max(6, baseline.mean * 0.12)

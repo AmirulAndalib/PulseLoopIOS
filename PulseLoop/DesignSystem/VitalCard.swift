@@ -8,10 +8,16 @@ import SwiftUI
 struct VitalCard<Content: View>: View {
     let model: VitalCardViewModel
     var compact: Bool = false
+    /// Whether to show the big top-left value + status row. Gauge cards set this false because the
+    /// gauge already shows the value/status in its center (avoids the duplicated number).
+    var showsValueRow: Bool = true
+    /// Replaces the default "Updated …" footer (used by gauge cards for a context + trend line).
+    var footerOverride: String?
     var onTap: (() -> Void)?
     @ViewBuilder var content: () -> Content
 
     private var valueFontSize: CGFloat { compact ? 34 : 56 }
+    private var footerText: String? { footerOverride ?? model.lastUpdatedText }
 
     var body: some View {
         Button {
@@ -19,12 +25,13 @@ struct VitalCard<Content: View>: View {
         } label: {
             VStack(alignment: .leading, spacing: compact ? 8 : 12) {
                 header
-                if !compact { valueRow }
+                if showsValueRow && !compact { valueRow }
                 content()
-                if let footer = model.lastUpdatedText, !compact {
+                if let footer = footerText, !compact {
                     Text(footer)
                         .font(.system(size: 11))
                         .foregroundStyle(PulseColors.textMuted)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)

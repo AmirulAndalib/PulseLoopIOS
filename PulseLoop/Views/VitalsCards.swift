@@ -29,6 +29,9 @@ struct VitalChartCard: View {
                     showPoints: showPoints,
                     showAxes: true,
                     dashedRules: model.dashedRules,
+                    thresholds: VitalsThresholdEngine.zoneThresholds(
+                        for: model.metric, profile: profile, baseline: baseline
+                    ),
                     colorForValue: { value in
                         VitalsThresholdEngine.colorToken(
                             forValue: value, metric: model.metric, profile: profile, baseline: baseline
@@ -44,13 +47,14 @@ struct VitalChartCard: View {
 
 struct VitalGaugeCard: View {
     let model: VitalCardViewModel
-    var size: CGFloat = 130
+    var size: CGFloat = 190
     let onTap: () -> Void
 
     var body: some View {
-        VitalCard(model: model, compact: true, onTap: onTap) {
+        // No top value row — the gauge center IS the value. The footer carries context + trend.
+        VitalCard(model: model, showsValueRow: false, footerOverride: gaugeFooter(model), onTap: onTap) {
             if model.isEmpty {
-                VitalEmptyState(metric: model.metric, compact: true)
+                VitalEmptyState(metric: model.metric)
             } else {
                 VitalRingGauge(
                     value: gaugeValue,
@@ -61,9 +65,10 @@ struct VitalGaugeCard: View {
                     centerUnit: model.unitText,
                     centerStatus: model.statusText,
                     size: size,
-                    lineWidth: 12
+                    lineWidth: 16
                 )
                 .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
             }
         }
     }
@@ -71,14 +76,14 @@ struct VitalGaugeCard: View {
     private var gaugeValue: Double { Double(model.valueText) ?? 0 }
 }
 
-// MARK: - Glucose gauge card (full or compact)
+// MARK: - Glucose gauge card
 
 struct VitalGlucoseCard: View {
     let model: VitalCardViewModel
     let onTap: () -> Void
 
     var body: some View {
-        VitalCard(model: model, onTap: onTap) {
+        VitalCard(model: model, showsValueRow: false, footerOverride: gaugeFooter(model), onTap: onTap) {
             if model.isEmpty {
                 VitalEmptyState(metric: .glucose)
             } else {
@@ -90,13 +95,20 @@ struct VitalGlucoseCard: View {
                     centerValue: model.valueText,
                     centerUnit: model.unitText,
                     centerStatus: model.statusText,
-                    size: 180,
-                    lineWidth: 14
+                    size: 190,
+                    lineWidth: 16
                 )
                 .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
             }
         }
     }
+}
+
+/// A one-line context footer for gauge cards: subtitle + trend delta (e.g. "Lower is calmer · ↓ 8 vs earlier").
+private func gaugeFooter(_ model: VitalCardViewModel) -> String? {
+    let parts = [model.subtitleText, model.trend.deltaText].compactMap { $0 }
+    return parts.isEmpty ? model.lastUpdatedText : parts.joined(separator: " · ")
 }
 
 // MARK: - Blood pressure dual-ring card

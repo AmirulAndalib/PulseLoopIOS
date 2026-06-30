@@ -61,21 +61,37 @@ enum VitalsThresholdEngine {
         }
     }
 
-    /// The token a chart should use to color the segment at `value`. Defaults to the metric accent
-    /// for in-range values (so dashboard lines stay calm), shifting to the zone color only when the
-    /// value lands in a watch/high/critical band.
+    /// The token a chart/legend/gauge should use at `value`: exactly the zone that contains it. The
+    /// line, reference band, gauge arc, stat dot, and status label all go through this (or the same
+    /// zone list), so the same zone is always the same color. (For metrics whose normal zone IS the
+    /// metric accent — HR, HRV — an in-range line still reads as the accent, because the zone says so.)
     static func colorToken(forValue value: Double,
                            metric: MetricKind,
                            profile: UserPhysiologyProfile,
                            context: MetricContext = MetricContext(),
                            baseline: BaselineStats? = nil) -> VitalColorToken {
-        let interp = interpret(value: value, metric: metric, profile: profile, context: context, baseline: baseline)
-        switch interp.primaryZone.severity {
-        case .optimal, .normal, .unknown:
-            return metric.accentToken
-        case .watch, .high, .critical:
-            return interp.primaryZone.colorToken
-        }
+        interpret(value: value, metric: metric, profile: profile, context: context, baseline: baseline).primaryZone.colorToken
+    }
+
+    /// The resolved zones for a metric in render order. The chart uses this to split a line segment at
+    /// each zone boundary it crosses, so each piece is colored by the zone it actually falls in.
+    static func resolvedZones(for metric: MetricKind,
+                              profile: UserPhysiologyProfile,
+                              context: MetricContext = MetricContext(),
+                              baseline: BaselineStats? = nil) -> [MetricZone] {
+        zones(for: metric, profile: profile, context: context, baseline: baseline)
+    }
+
+    /// The sorted interior thresholds (zone boundaries) for a metric — the y-values where the line
+    /// color can change. Excludes open ends. Used to split segments at crossings.
+    static func zoneThresholds(for metric: MetricKind,
+                               profile: UserPhysiologyProfile,
+                               context: MetricContext = MetricContext(),
+                               baseline: BaselineStats? = nil) -> [Double] {
+        let zones = resolvedZones(for: metric, profile: profile, context: context, baseline: baseline)
+        // Each zone's `upper` (when finite) is a boundary; dedupe + sort.
+        let bounds = zones.compactMap(\.upper)
+        return Array(Set(bounds)).sorted()
     }
 
     // MARK: - Blood pressure (two inputs → worse-of category)
@@ -110,31 +126,35 @@ enum VitalsThresholdEngine {
         let lowLabel: String
         let lowSeverity: ZoneSeverity
         let lowExplanation: String
+        let lowColor: VitalColorToken
         if profile.athleteMode {
             lowLabel = "Athletic"
             lowSeverity = .optimal
+            lowColor = .metricAccent(.heartRate)   // a low athletic HR is good, not a caution
             lowExplanation = "A low resting heart rate is common with high fitness."
         } else if profile.usesBetaBlockers {
             lowLabel = "Low (medication)"
             lowSeverity = .normal
+            lowColor = .blue
             lowExplanation = "Beta-blockers lower heart rate; this is expected on that medication."
         } else {
             lowLabel = "Low"
             lowSeverity = .watch
+            lowColor = .blue
             lowExplanation = "Below the typical resting range. Often fine, but worth noting if you feel faint."
         }
         return [
             MetricZone(id: "hr.low", label: lowLabel, lower: nil, upper: 60,
-                       severity: lowSeverity, colorToken: lowSeverity.colorToken, explanation: lowExplanation),
+                       severity: lowSeverity, colorToken: lowColor, explanation: lowExplanation),
             // 60–100 inclusive is normal, so the half-open upper bound is 101.
             MetricZone(id: "hr.normal", label: "Normal", lower: 60, upper: 101,
-                       severity: .normal, colorToken: .normal,
+                       severity: .normal, colorToken: .metricAccent(.heartRate),
                        explanation: "A typical resting heart rate for adults is 60–100 bpm."),
             MetricZone(id: "hr.elevated", label: "Elevated", lower: 101, upper: 120,
-                       severity: .watch, colorToken: .watch,
+                       severity: .watch, colorToken: .amber,
                        explanation: "Above the typical resting range. Activity, caffeine, or stress can raise it."),
             MetricZone(id: "hr.high", label: "High", lower: 120, upper: nil,
-                       severity: .high, colorToken: .high,
+                       severity: .high, colorToken: .red,
                        explanation: "A high resting heart rate. Talk to a clinician if it persists at rest."),
         ]
     }
@@ -149,16 +169,16 @@ enum VitalsThresholdEngine {
         let altitudeNote = highAltitude ? " Expected values are lower at altitude." : ""
         return [
             MetricZone(id: "spo2.critical", label: "Very low", lower: nil, upper: 89,
-                       severity: .critical, colorToken: .critical,
+                       severity: .critical, colorToken: .red,
                        explanation: "An urgently low oxygen reading. Seek care if you also feel unwell.\(altitudeNote)"),
             MetricZone(id: "spo2.high", label: "Low", lower: 89, upper: 93,
-                       severity: .high, colorToken: .high,
+                       severity: .high, colorToken: .orange,
                        explanation: "Low blood oxygen. Re-measure when still; talk to a clinician if persistent.\(altitudeNote)"),
-            MetricZone(id: "spo2.watch", label: "Watch", lower: 93, upper: watchUpper,
-                       severity: .watch, colorToken: .watch,
+            MetricZone(id: "spo2.watch", label: "Slightly low", lower: 93, upper: watchUpper,
+                       severity: .watch, colorToken: .amber,
                        explanation: "Slightly below the typical range.\(altitudeNote)"),
             MetricZone(id: "spo2.normal", label: "Normal", lower: watchUpper, upper: nil,
-                       severity: .normal, colorToken: .normal,
+                       severity: .normal, colorToken: .cyan,
                        explanation: "A normal blood-oxygen level is 95–100%.\(altitudeNote)"),
         ]
     }
@@ -175,16 +195,16 @@ enum VitalsThresholdEngine {
         let sd = baseline.standardDeviation
         return [
             MetricZone(id: "hrv.below", label: "Below baseline", lower: nil, upper: mean - sd,
-                       severity: .high, colorToken: .high,
+                       severity: .high, colorToken: .amber,
                        explanation: "Notably below your typical HRV — often linked to stress, poor sleep, or strain."),
             MetricZone(id: "hrv.slightlyBelow", label: "Slightly below", lower: mean - sd, upper: mean - 0.5 * sd,
-                       severity: .watch, colorToken: .watch,
+                       severity: .watch, colorToken: .softAmber,
                        explanation: "A little below your usual range."),
             MetricZone(id: "hrv.near", label: "Near baseline", lower: mean - 0.5 * sd, upper: mean + 0.5 * sd,
-                       severity: .normal, colorToken: .normal,
+                       severity: .normal, colorToken: .metricAccent(.hrv),
                        explanation: "Around your personal baseline."),
             MetricZone(id: "hrv.above", label: "Above baseline", lower: mean + 0.5 * sd, upper: nil,
-                       severity: .optimal, colorToken: .optimal,
+                       severity: .optimal, colorToken: .mint,
                        explanation: "Above your typical HRV — often a sign of good recovery."),
         ]
     }
@@ -216,26 +236,26 @@ enum VitalsThresholdEngine {
     private static func stressZones() -> [MetricZone] {
         [
             MetricZone(id: "stress.calm", label: "Calm", lower: nil, upper: 26,
-                       severity: .optimal, colorToken: .optimal, explanation: "Low stress score — relaxed."),
+                       severity: .optimal, colorToken: .mint, explanation: "Low stress score — relaxed."),
             MetricZone(id: "stress.normal", label: "Normal", lower: 26, upper: 51,
-                       severity: .normal, colorToken: .normal, explanation: "A typical daytime stress score."),
+                       severity: .normal, colorToken: .cyan, explanation: "A typical daytime stress score."),
             MetricZone(id: "stress.elevated", label: "Elevated", lower: 51, upper: 76,
-                       severity: .watch, colorToken: .watch, explanation: "Elevated stress — consider a short break."),
+                       severity: .watch, colorToken: .amber, explanation: "Elevated stress — consider a short break."),
             MetricZone(id: "stress.high", label: "High", lower: 76, upper: nil,
-                       severity: .high, colorToken: .high, explanation: "High stress score. Wellness estimate, not a diagnosis."),
+                       severity: .high, colorToken: .red, explanation: "High stress score. Wellness estimate, not a diagnosis."),
         ]
     }
 
     private static func fatigueZones() -> [MetricZone] {
         [
             MetricZone(id: "fatigue.fresh", label: "Fresh", lower: nil, upper: 25,
-                       severity: .optimal, colorToken: .optimal, explanation: "Low fatigue — well recovered."),
+                       severity: .optimal, colorToken: .mint, explanation: "Low fatigue — well recovered."),
             MetricZone(id: "fatigue.mild", label: "Mild", lower: 25, upper: 50,
-                       severity: .normal, colorToken: .normal, explanation: "Mild fatigue."),
+                       severity: .normal, colorToken: .cyan, explanation: "Mild fatigue."),
             MetricZone(id: "fatigue.tired", label: "Tired", lower: 50, upper: 75,
-                       severity: .watch, colorToken: .watch, explanation: "Tired — consider lighter activity and good sleep."),
+                       severity: .watch, colorToken: .amber, explanation: "Tired — consider lighter activity and good sleep."),
             MetricZone(id: "fatigue.high", label: "High fatigue", lower: 75, upper: nil,
-                       severity: .high, colorToken: .high, explanation: "High fatigue score. Wellness estimate from the ring."),
+                       severity: .high, colorToken: .red, explanation: "High fatigue score. Wellness estimate from the ring."),
         ]
     }
 
@@ -248,33 +268,33 @@ enum VitalsThresholdEngine {
     private static func systolicZones() -> [MetricZone] {
         [
             MetricZone(id: "bp.sys.low", label: "Low", lower: nil, upper: 90,
-                       severity: .watch, colorToken: .watch, explanation: "Low systolic pressure (below 90)."),
+                       severity: .watch, colorToken: .blue, explanation: "Low systolic pressure (below 90)."),
             MetricZone(id: "bp.sys.normal", label: "Normal", lower: 90, upper: 120,
-                       severity: .normal, colorToken: .normal, explanation: "Normal blood pressure is below 120/80."),
+                       severity: .normal, colorToken: .mint, explanation: "Normal blood pressure is below 120/80."),
             MetricZone(id: "bp.sys.elevated", label: "Elevated", lower: 120, upper: 130,
-                       severity: .watch, colorToken: .watch, explanation: "Elevated systolic (120–129)."),
+                       severity: .watch, colorToken: .amber, explanation: "Elevated systolic (120–129)."),
             MetricZone(id: "bp.sys.stage1", label: "Stage 1", lower: 130, upper: 140,
-                       severity: .high, colorToken: .high, explanation: "Stage 1 hypertension range (systolic 130–139)."),
+                       severity: .high, colorToken: .orange, explanation: "Stage 1 hypertension range (systolic 130–139)."),
             MetricZone(id: "bp.sys.stage2", label: "Stage 2", lower: 140, upper: 180,
-                       severity: .high, colorToken: .high, explanation: "Stage 2 hypertension range (systolic ≥140)."),
+                       severity: .high, colorToken: .red, explanation: "Stage 2 hypertension range (systolic ≥140)."),
             MetricZone(id: "bp.sys.crisis", label: "Severe", lower: 180, upper: nil,
-                       severity: .critical, colorToken: .critical, explanation: "Severe range (systolic >180). Seek care if confirmed."),
+                       severity: .critical, colorToken: .red, explanation: "Severe range (systolic >180). Seek care if confirmed."),
         ]
     }
 
     private static func diastolicZones() -> [MetricZone] {
         [
             MetricZone(id: "bp.dia.low", label: "Low", lower: nil, upper: 60,
-                       severity: .watch, colorToken: .watch, explanation: "Low diastolic pressure (below 60)."),
+                       severity: .watch, colorToken: .blue, explanation: "Low diastolic pressure (below 60)."),
             MetricZone(id: "bp.dia.normal", label: "Normal", lower: 60, upper: 80,
-                       severity: .normal, colorToken: .normal, explanation: "Normal diastolic is below 80."),
+                       severity: .normal, colorToken: .mint, explanation: "Normal diastolic is below 80."),
             // Note: there is no diastolic "Elevated" category — 80–89 is already Stage 1 by AHA.
             MetricZone(id: "bp.dia.stage1", label: "Stage 1", lower: 80, upper: 90,
-                       severity: .high, colorToken: .high, explanation: "Stage 1 hypertension range (diastolic 80–89)."),
+                       severity: .high, colorToken: .orange, explanation: "Stage 1 hypertension range (diastolic 80–89)."),
             MetricZone(id: "bp.dia.stage2", label: "Stage 2", lower: 90, upper: 120,
-                       severity: .high, colorToken: .high, explanation: "Stage 2 hypertension range (diastolic ≥90)."),
+                       severity: .high, colorToken: .red, explanation: "Stage 2 hypertension range (diastolic ≥90)."),
             MetricZone(id: "bp.dia.crisis", label: "Severe", lower: 120, upper: nil,
-                       severity: .critical, colorToken: .critical, explanation: "Severe range (diastolic >120). Seek care if confirmed."),
+                       severity: .critical, colorToken: .red, explanation: "Severe range (diastolic >120). Seek care if confirmed."),
         ]
     }
 
@@ -285,36 +305,36 @@ enum VitalsThresholdEngine {
         case .fasting:
             return [
                 MetricZone(id: "glucose.low", label: "Low", lower: nil, upper: 70,
-                           severity: .high, colorToken: .high, explanation: "Below 70 mg/dL is low."),
+                           severity: .high, colorToken: .red, explanation: "Below 70 mg/dL is low."),
                 MetricZone(id: "glucose.normal", label: "Normal", lower: 70, upper: 100,
-                           severity: .normal, colorToken: .normal, explanation: "Fasting normal is up to 99 mg/dL."),
+                           severity: .normal, colorToken: .mint, explanation: "Fasting normal is up to 99 mg/dL."),
                 MetricZone(id: "glucose.elevated", label: "Elevated", lower: 100, upper: 126,
-                           severity: .watch, colorToken: .watch, explanation: "Fasting 100–125 is above the typical range."),
+                           severity: .watch, colorToken: .amber, explanation: "Fasting 100–125 is above the typical range."),
                 MetricZone(id: "glucose.high", label: "High", lower: 126, upper: nil,
-                           severity: .high, colorToken: .high, explanation: "Fasting ≥126. Talk to a clinician if confirmed by a meter."),
+                           severity: .high, colorToken: .red, explanation: "Fasting ≥126. Talk to a clinician if confirmed by a meter."),
             ]
         case .postMeal:
             return [
                 MetricZone(id: "glucose.low", label: "Low", lower: nil, upper: 70,
-                           severity: .high, colorToken: .high, explanation: "Below 70 mg/dL is low."),
+                           severity: .high, colorToken: .red, explanation: "Below 70 mg/dL is low."),
                 MetricZone(id: "glucose.normal", label: "Normal", lower: 70, upper: 140,
-                           severity: .normal, colorToken: .normal, explanation: "Two-hour post-meal normal is up to 140 mg/dL."),
+                           severity: .normal, colorToken: .mint, explanation: "Two-hour post-meal normal is up to 140 mg/dL."),
                 MetricZone(id: "glucose.elevated", label: "Elevated", lower: 140, upper: 200,
-                           severity: .watch, colorToken: .watch, explanation: "Two-hour 140–199 is above the typical range."),
+                           severity: .watch, colorToken: .amber, explanation: "Two-hour 140–199 is above the typical range."),
                 MetricZone(id: "glucose.high", label: "High", lower: 200, upper: nil,
-                           severity: .high, colorToken: .high, explanation: "Two-hour ≥200. Confirm with a meter and a clinician."),
+                           severity: .high, colorToken: .red, explanation: "Two-hour ≥200. Confirm with a meter and a clinician."),
             ]
         default:
             // Unknown / random context: conservative labels, NO "prediabetes"/"diabetes" wording.
             return [
                 MetricZone(id: "glucose.low", label: "Low", lower: nil, upper: 70,
-                           severity: .high, colorToken: .high, explanation: "Below 70 mg/dL is low."),
+                           severity: .high, colorToken: .red, explanation: "Below 70 mg/dL is low."),
                 MetricZone(id: "glucose.typical", label: "Typical", lower: 70, upper: 140,
-                           severity: .normal, colorToken: .normal, explanation: "Within a typical range for a non-fasting reading."),
+                           severity: .normal, colorToken: .mint, explanation: "Within a typical range for a non-fasting reading."),
                 MetricZone(id: "glucose.elevated", label: "Elevated", lower: 140, upper: 200,
-                           severity: .watch, colorToken: .watch, explanation: "Above the typical range. Context (meals) affects this."),
+                           severity: .watch, colorToken: .amber, explanation: "Above the typical range. Context (meals) affects this."),
                 MetricZone(id: "glucose.veryHigh", label: "Very high", lower: 200, upper: nil,
-                           severity: .high, colorToken: .high, explanation: "A high reading regardless of context. Confirm with a meter."),
+                           severity: .high, colorToken: .red, explanation: "A high reading regardless of context. Confirm with a meter."),
             ]
         }
     }
@@ -339,11 +359,12 @@ enum VitalsThresholdEngine {
         // absolute, so we keep a single soft "typical" band and flag extremes only.
         [
             MetricZone(id: "temp.low", label: "Cool", lower: nil, upper: 31,
-                       severity: .watch, colorToken: .watch, explanation: "Cooler than typical skin temperature."),
+                       severity: .watch, colorToken: .blue, explanation: "Cooler than typical skin temperature."),
             MetricZone(id: "temp.normal", label: "Typical", lower: 31, upper: 36,
-                       severity: .normal, colorToken: .normal, explanation: "A typical skin-temperature range from the ring."),
+                       severity: .normal, colorToken: .metricAccent(.temperature),
+                       explanation: "A typical skin-temperature range from the ring."),
             MetricZone(id: "temp.high", label: "Warm", lower: 36, upper: nil,
-                       severity: .watch, colorToken: .watch, explanation: "Warmer than typical. Trends matter more than a single reading."),
+                       severity: .watch, colorToken: .amber, explanation: "Warmer than typical. Trends matter more than a single reading."),
         ]
     }
 

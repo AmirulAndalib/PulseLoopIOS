@@ -77,6 +77,9 @@ struct ZoneLineChart: View {
     var showAxes: Bool = true
     var dashedRules: [Double] = []
     var height: CGFloat = 150
+    /// Zone boundaries (y-values) where the line color may change. The line is split at each crossing
+    /// so a piece never spans two zones. Empty = no splitting (whole-segment color).
+    var thresholds: [Double] = []
     /// Injected from the threshold engine: maps a value to the color its segment should take.
     let colorForValue: (Double) -> Color
 
@@ -131,8 +134,9 @@ struct ZoneLineChart: View {
         .frame(height: height)
     }
 
-    /// Stroke one contiguous segment, coloring each sub-segment by its midpoint value so a line that
-    /// crosses into a watch/high zone visibly shifts color there.
+    /// Stroke one contiguous segment. Each sample-to-sample pair is split at every zone boundary it
+    /// crosses, so each drawn piece lies entirely within one zone and takes that zone's color — the
+    /// line then matches the reference bands and legend exactly (no "colored through the wrong area").
     private func drawSegment(_ segment: [ChartSample],
                              context: inout GraphicsContext,
                              plot: CGRect,
@@ -149,19 +153,27 @@ struct ZoneLineChart: View {
             return
         }
         for (a, b) in zip(segment, segment.dropFirst()) {
-            guard let x1 = proxy.position(forX: a.timestamp),
-                  let y1 = proxy.position(forY: a.value),
-                  let x2 = proxy.position(forX: b.timestamp),
-                  let y2 = proxy.position(forY: b.value) else { continue }
-            var path = Path()
-            path.move(to: CGPoint(x: plot.minX + x1, y: plot.minY + y1))
-            path.addLine(to: CGPoint(x: plot.minX + x2, y: plot.minY + y2))
-            let mid = (a.value + b.value) / 2
-            context.stroke(
-                path,
-                with: .color(colorForValue(mid)),
-                style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round)
+            let pieces = ZoneLineSplitter.split(
+                LinePoint(time: a.timestamp, value: a.value),
+                LinePoint(time: b.timestamp, value: b.value),
+                thresholds: thresholds
             )
+            for (start, end) in pieces {
+                guard let x1 = proxy.position(forX: start.time),
+                      let y1 = proxy.position(forY: start.value),
+                      let x2 = proxy.position(forX: end.time),
+                      let y2 = proxy.position(forY: end.value) else { continue }
+                var path = Path()
+                path.move(to: CGPoint(x: plot.minX + x1, y: plot.minY + y1))
+                path.addLine(to: CGPoint(x: plot.minX + x2, y: plot.minY + y2))
+                // Midpoint of a within-zone piece lands squarely in its zone.
+                let mid = (start.value + end.value) / 2
+                context.stroke(
+                    path,
+                    with: .color(colorForValue(mid)),
+                    style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round)
+                )
+            }
         }
     }
 }
