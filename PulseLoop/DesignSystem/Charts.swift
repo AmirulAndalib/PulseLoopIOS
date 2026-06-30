@@ -34,9 +34,9 @@ struct HRLineChart: View {
         let lo = (values.min() ?? 0) - 5
         let hi = (values.max() ?? 100) + 5
         Chart {
-            ForEach(Array(samples.enumerated()), id: \.offset) { index, sample in
+            ForEach(samples) { sample in
                 LineMark(
-                    x: .value("i", index),
+                    x: .value("Time", sample.timestamp),
                     y: .value("bpm", sample.value)
                 )
                 .interpolationMethod(.monotone)
@@ -113,21 +113,23 @@ struct HRVTrendBandChart: View {
         let bandHalf = max(6, mean * 0.12)   // ±12% baseline band
 
         Chart {
-            // Baseline band
-            RectangleMark(
-                xStart: .value("x0", 0),
-                xEnd: .value("x1", max(1, samples.count - 1)),
-                yStart: .value("lo", mean - bandHalf),
-                yEnd: .value("hi", mean + bandHalf)
-            )
-            .foregroundStyle(PulseColors.hrv.opacity(0.12))
+            // Baseline band spans the full time domain of the series.
+            if let start = samples.first?.timestamp, let end = samples.last?.timestamp {
+                RectangleMark(
+                    xStart: .value("Start", start),
+                    xEnd: .value("End", end),
+                    yStart: .value("lo", mean - bandHalf),
+                    yEnd: .value("hi", mean + bandHalf)
+                )
+                .foregroundStyle(PulseColors.hrv.opacity(0.12))
+            }
 
             RuleMark(y: .value("mean", mean))
                 .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
                 .foregroundStyle(PulseColors.hrv.opacity(0.4))
 
-            ForEach(Array(samples.enumerated()), id: \.offset) { index, sample in
-                LineMark(x: .value("i", index), y: .value("ms", sample.value))
+            ForEach(samples) { sample in
+                LineMark(x: .value("Time", sample.timestamp), y: .value("ms", sample.value))
                     .interpolationMethod(.monotone)
                     .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round))
                     .foregroundStyle(PulseColors.hrv)
@@ -153,9 +155,9 @@ struct TemperatureRangeChart: View {
         let hi = (values.max() ?? 38) + 0.5
 
         Chart {
-            ForEach(Array(samples.enumerated()), id: \.offset) { index, sample in
+            ForEach(samples) { sample in
                 AreaMark(
-                    x: .value("i", index),
+                    x: .value("Time", sample.timestamp),
                     yStart: .value("lo", lo),
                     yEnd: .value("temp", sample.value)
                 )
@@ -166,7 +168,7 @@ struct TemperatureRangeChart: View {
                         startPoint: .top, endPoint: .bottom
                     )
                 )
-                LineMark(x: .value("i", index), y: .value("temp", sample.value))
+                LineMark(x: .value("Time", sample.timestamp), y: .value("temp", sample.value))
                     .interpolationMethod(.monotone)
                     .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round))
                     .foregroundStyle(PulseColors.temperature)
@@ -187,12 +189,12 @@ struct SpO2DotsChart: View {
 
     var body: some View {
         Chart {
-            ForEach(Array(samples.enumerated()), id: \.offset) { index, sample in
-                LineMark(x: .value("i", index), y: .value("spo2", sample.value))
+            ForEach(samples) { sample in
+                LineMark(x: .value("Time", sample.timestamp), y: .value("spo2", sample.value))
                     .interpolationMethod(.monotone)
                     .lineStyle(StrokeStyle(lineWidth: 1))
                     .foregroundStyle(PulseColors.spo2.opacity(0.25))
-                PointMark(x: .value("i", index), y: .value("spo2", sample.value))
+                PointMark(x: .value("Time", sample.timestamp), y: .value("spo2", sample.value))
                     .symbolSize(34)
                     .foregroundStyle(PulseColors.spo2)
             }

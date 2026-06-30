@@ -36,6 +36,13 @@ struct SettingsView: View {
                 ) { path.append(AppRoute.settingsProfile) }
 
                 SettingsCategoryRow(
+                    icon: "lungs",
+                    tint: PulseColors.hrv,
+                    title: "Physiology",
+                    subtitle: "Athlete mode, altitude, and reference-range tuning"
+                ) { path.append(AppRoute.settingsPhysiology) }
+
+                SettingsCategoryRow(
                     icon: "bell.badge",
                     tint: PulseColors.warning,
                     title: "Notifications",

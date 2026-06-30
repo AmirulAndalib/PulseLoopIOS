@@ -2,12 +2,14 @@ import SwiftUI
 
 enum AppRoute: Hashable {
     case activityDetail(UUID)
+    case metricDetail(MetricKind)
     case recordSelect
     case recordLive(UUID)
     case recordSummary(UUID)
     case settings
     // Settings detail screens (the top-level `settings` route is the category list).
     case settingsProfile
+    case settingsPhysiology
     case settingsNotifications
     case settingsCoach
     case settingsWearable

@@ -54,6 +54,8 @@ struct RootAppView: View {
                 switch route {
                 case let .activityDetail(id):
                     ActivityDetailView(sessionId: id)
+                case let .metricDetail(metric):
+                    MetricDetailView(metric: metric, path: $path)
                 case .recordSelect:
                     RecordSelectView(path: $path)
                 case let .recordLive(id):
@@ -64,6 +66,8 @@ struct RootAppView: View {
                     SettingsView(path: $path)
                 case .settingsProfile:
                     ProfileSettingsView()
+                case .settingsPhysiology:
+                    PhysiologySettingsView()
                 case .settingsNotifications:
                     NotificationsSettingsView()
                 case .settingsCoach:
@@ -143,7 +147,7 @@ struct MainTabView: View {
             ZStack(alignment: .bottom) {
                 TabView(selection: $selected) {
                     TodayView(path: $path, selectedTab: $selected, isActive: selected == .today).tag(MainTab.today)
-                    VitalsView(isActive: selected == .vitals).tag(MainTab.vitals)
+                    VitalsView(path: $path, isActive: selected == .vitals).tag(MainTab.vitals)
                     ActivityView(path: $path).tag(MainTab.activity)
                     SleepView().tag(MainTab.sleep)
                     if coachEnabled {

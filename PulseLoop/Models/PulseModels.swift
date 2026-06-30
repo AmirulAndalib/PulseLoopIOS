@@ -376,9 +376,28 @@ final class UserProfile {
     var createdAt: Date
     var updatedAt: Date
 
+    // Physiology inputs that shift vitals reference ranges (consumed by VitalsThresholdEngine via
+    // UserPhysiologyProfile). All optional/defaulted so existing stored profiles migrate via SwiftData
+    // lightweight migration with no schema version bump — same pattern as `unitsRaw`.
+    /// Lower resting-HR thresholds; treat a low resting HR as athletic rather than a concern.
+    var athleteMode: Bool = false
+    /// Home/typical altitude in metres; above ~2000 m shifts the expected SpO₂ range down.
+    var altitudeMeters: Double?
+    /// Beta-blocker use lowers resting HR; nil = not specified.
+    var usesBetaBlockers: Bool?
+    /// Known lung condition lowers expected SpO₂; nil = not specified.
+    var hasKnownLungCondition: Bool?
+    /// Preferred glucose display unit.
+    var preferredGlucoseUnitRaw: String = GlucoseUnit.mgdl.rawValue
+
     var units: UnitsPreference {
         get { UnitsPreference(rawValue: unitsRaw) ?? .metric }
         set { unitsRaw = newValue.rawValue }
+    }
+
+    var preferredGlucoseUnit: GlucoseUnit {
+        get { GlucoseUnit(rawValue: preferredGlucoseUnitRaw) ?? .mgdl }
+        set { preferredGlucoseUnitRaw = newValue.rawValue }
     }
 
     init(
@@ -390,7 +409,12 @@ final class UserProfile {
         weightKg: Double? = nil,
         units: UnitsPreference = .metric,
         onboardingCompleted: Bool = false,
-        baselineCompleted: Bool = false
+        baselineCompleted: Bool = false,
+        athleteMode: Bool = false,
+        altitudeMeters: Double? = nil,
+        usesBetaBlockers: Bool? = nil,
+        hasKnownLungCondition: Bool? = nil,
+        preferredGlucoseUnit: GlucoseUnit = .mgdl
     ) {
         self.id = id
         self.name = name
@@ -401,6 +425,11 @@ final class UserProfile {
         self.unitsRaw = units.rawValue
         self.onboardingCompleted = onboardingCompleted
         self.baselineCompleted = baselineCompleted
+        self.athleteMode = athleteMode
+        self.altitudeMeters = altitudeMeters
+        self.usesBetaBlockers = usesBetaBlockers
+        self.hasKnownLungCondition = hasKnownLungCondition
+        self.preferredGlucoseUnitRaw = preferredGlucoseUnit.rawValue
         self.createdAt = Date()
         self.updatedAt = Date()
     }
