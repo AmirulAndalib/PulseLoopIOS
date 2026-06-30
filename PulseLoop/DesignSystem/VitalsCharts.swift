@@ -27,12 +27,23 @@ private extension View {
     func vitalsAxes(showAxes: Bool, range: MetricRange) -> some View {
         chartXAxis {
             if showAxes {
-                AxisMarks(values: .automatic(desiredCount: 4)) { _ in
-                    AxisGridLine().foregroundStyle(.clear)
-                    AxisTick().foregroundStyle(.clear)
-                    AxisValueLabel(format: VitalsAxisFormat.dateFormat(for: range))
-                        .font(.system(size: 10))
-                        .foregroundStyle(PulseColors.textMuted)
+                if range == .sevenDays {
+                    // One tick per day so the whole week (all 7 days) is labelled, not ~4.
+                    AxisMarks(values: .stride(by: .day, count: 1)) { _ in
+                        AxisGridLine().foregroundStyle(.clear)
+                        AxisTick().foregroundStyle(.clear)
+                        AxisValueLabel(format: VitalsAxisFormat.dateFormat(for: range))
+                            .font(.system(size: 10))
+                            .foregroundStyle(PulseColors.textMuted)
+                    }
+                } else {
+                    AxisMarks(values: .automatic(desiredCount: 4)) { _ in
+                        AxisGridLine().foregroundStyle(.clear)
+                        AxisTick().foregroundStyle(.clear)
+                        AxisValueLabel(format: VitalsAxisFormat.dateFormat(for: range))
+                            .font(.system(size: 10))
+                            .foregroundStyle(PulseColors.textMuted)
+                    }
                 }
             }
         }

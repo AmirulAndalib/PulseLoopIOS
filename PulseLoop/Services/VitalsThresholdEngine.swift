@@ -187,8 +187,9 @@ enum VitalsThresholdEngine {
 
     private static func hrvZones(baseline: BaselineStats?) -> [MetricZone] {
         guard let baseline, baseline.isEstablished, baseline.standardDeviation > 0 else {
+            // No baseline yet → show the metric's own purple accent (not a gray "unknown" color).
             return [MetricZone(id: "hrv.building", label: "Building baseline", lower: nil, upper: nil,
-                               severity: .unknown, colorToken: .neutral,
+                               severity: .unknown, colorToken: .metricAccent(.hrv),
                                explanation: "HRV is personal. Wear your ring for about a week to learn your baseline.")]
         }
         let mean = baseline.mean
