@@ -51,19 +51,12 @@ struct CoachSettingsSection: View {
         !OpenRouterModel.allCases.contains { $0.rawValue == store.settings.model }
     }
 
-    /// Which provider's key field to surface: the active cloud provider, or — in
-    /// on-device mode — the chosen cloud backup (so its key can be entered).
+    /// Which provider's key field to surface. The on-device provider needs no
+    /// key (and has no cloud backup), so it surfaces none.
     private var effectiveKeyProvider: CoachProviderMode? {
         store.settings.providerMode == .appleOnDevice
-            ? store.settings.appleFallbackProvider
+            ? nil
             : store.settings.providerMode
-    }
-
-    private var fallbackBinding: Binding<CoachProviderMode?> {
-        Binding(
-            get: { store.settings.appleFallbackProvider },
-            set: { store.settings.appleFallbackProvider = $0 }
-        )
     }
 
     var body: some View {
@@ -82,20 +75,11 @@ struct CoachSettingsSection: View {
                 .tint(PulseColors.accent)
             }
 
-            // On-device has a single fixed model — show a privacy/availability
-            // card + a cloud-backup chooser instead of a model picker.
+            // On-device has a single fixed model and runs only on-device (no
+            // cloud backup) — show a privacy/availability card instead of a
+            // model picker.
             if store.settings.providerMode == .appleOnDevice {
                 appleOnDeviceCard
-                labeledRow("Cloud backup") {
-                    Picker("Cloud backup", selection: fallbackBinding) {
-                        Text("None").tag(CoachProviderMode?.none)
-                        Text("OpenAI").tag(CoachProviderMode?.some(.userOpenAIKey))
-                        Text("Gemini").tag(CoachProviderMode?.some(.userGeminiKey))
-                        Text("OpenRouter").tag(CoachProviderMode?.some(.userOpenRouterKey))
-                    }
-                    .pickerStyle(.menu)
-                    .tint(PulseColors.accent)
-                }
             } else {
                 labeledRow("Model") {
                     Picker("Model", selection: modelPickerBinding) {
@@ -125,8 +109,7 @@ struct CoachSettingsSection: View {
             }
 
             // The key field tracks the *effective* provider — the active cloud
-            // provider, or (in on-device mode) the chosen cloud backup — so the
-            // backup's key can be entered without leaving on-device mode.
+            // provider (none in on-device mode, which needs no key).
             if effectiveKeyProvider == .userOpenAIKey {
                 apiKeyField(
                     placeholder: "sk-…",
@@ -162,7 +145,11 @@ struct CoachSettingsSection: View {
                 )
             }
 
-            toggleRow("Web search", isOn: webSearchBinding)
+            // The on-device provider is tool-less: it ignores web search, so the
+            // toggle isn't offered there.
+            if store.settings.providerMode != .appleOnDevice {
+                toggleRow("Web search", isOn: webSearchBinding)
+            }
 
             // OpenRouter-only routing controls. OpenRouter exposes a unified
             // reasoning-effort hint plus provider-level privacy and sort options
@@ -195,7 +182,11 @@ struct CoachSettingsSection: View {
 
             toggleRow("AI actions (set goals, log, edit)", isOn: writeToolsBinding)
             toggleRow("Live ring measurements", isOn: liveMeasurementsBinding)
-            toggleRow("Image input (attach photos)", isOn: imageInputBinding)
+            // The on-device model has no image-input API in the shipping SDK, so
+            // the option isn't offered there.
+            if store.settings.providerMode != .appleOnDevice {
+                toggleRow("Image input (attach photos)", isOn: imageInputBinding)
+            }
 
             if !memories.isEmpty {
                 SectionHeader(title: "Coach memory", action: nil)

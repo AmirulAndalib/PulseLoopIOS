@@ -112,10 +112,6 @@ struct CoachSettings: Codable, Equatable {
     /// Off by default — users who only want metrics get a coach-free app.
     var coachMasterEnabled: Bool = false
     var providerMode: CoachProviderMode = .userOpenAIKey
-    /// Cloud backup for the on-device provider: when on-device is unavailable or a
-    /// generation fails, fall back to this provider (using its stored key). `nil`
-    /// = no backup. Only the key-based cloud providers are valid values.
-    var appleFallbackProvider: CoachProviderMode? = nil
     /// Default matches the web app; user-configurable (never hard-coded in the client).
     var model: String = CoachModel.gpt54.rawValue
     /// Optional reasoning effort hint ("low"/"medium"/"high") when the model supports it.
@@ -165,7 +161,6 @@ struct CoachSettings: Codable, Equatable {
         let d = CoachSettings.default
         coachMasterEnabled = try c.decodeIfPresent(Bool.self, forKey: .coachMasterEnabled) ?? d.coachMasterEnabled
         providerMode = try c.decodeIfPresent(CoachProviderMode.self, forKey: .providerMode) ?? d.providerMode
-        appleFallbackProvider = try c.decodeIfPresent(CoachProviderMode.self, forKey: .appleFallbackProvider)
         model = try c.decodeIfPresent(String.self, forKey: .model) ?? d.model
         reasoningEffort = try c.decodeIfPresent(String.self, forKey: .reasoningEffort)
         enableWebSearch = try c.decodeIfPresent(Bool.self, forKey: .enableWebSearch) ?? d.enableWebSearch

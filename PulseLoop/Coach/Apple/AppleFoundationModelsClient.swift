@@ -16,6 +16,11 @@ import FoundationModels
 /// guided generation can't be built for that schema (the orchestrator's
 /// `JSONRepair` then recovers the object).
 ///
+/// **Text-only:** the shipping FoundationModels SDK has no image-input API
+/// (`PromptBuilder` accepts only text), so image attachments aren't supported
+/// on-device. The Settings UI hides the image-input option when this provider is
+/// selected, so image turns never reach this client.
+///
 /// Like `GeminiClient`, one instance covers a single agent turn and accumulates
 /// the conversation across `send` calls so repair turns keep prior context.
 final class AppleFoundationModelsClient: ResponsesClient, @unchecked Sendable {
@@ -74,7 +79,7 @@ final class AppleFoundationModelsClient: ResponsesClient, @unchecked Sendable {
         var systemParts: [String] = []
         for item in input {
             let role = item["role"] as? String ?? ""
-            let content = item["content"] as? String ?? ""
+            let content = text(from: item)
             if role == "system" || role == "developer" {
                 if !content.isEmpty { systemParts.append(content) }
             } else if !content.isEmpty {
@@ -92,13 +97,29 @@ final class AppleFoundationModelsClient: ResponsesClient, @unchecked Sendable {
             // Tool results can't be produced on-device (v1 is tool-less), but a
             // repair/continuation turn still arrives as a plain message — fold it
             // in as a user turn so context is preserved.
-            if let role = item["role"] as? String, let content = item["content"] as? String, !content.isEmpty {
+            let content = text(from: item)
+            if let role = item["role"] as? String, !content.isEmpty {
                 turns.append((role: role == "assistant" ? "assistant" : "user", text: content))
             } else if (item["type"] as? String) == "function_call_output",
                       let output = item["output"] as? String, !output.isEmpty {
                 turns.append((role: "user", text: "Tool result: \(output)"))
             }
         }
+    }
+
+    /// Pulls the text out of an input item. Text turns carry `content` as a plain
+    /// `String`; a multimodal item (which shouldn't reach this client — image
+    /// input is hidden on-device) carries the content-part array, from which we
+    /// keep only the `input_text`/`text` parts and drop images.
+    private func text(from item: [String: Any]) -> String {
+        if let content = item["content"] as? String { return content }
+        guard let parts = item["content"] as? [[String: Any]] else { return "" }
+        return parts.compactMap { part -> String? in
+            switch part["type"] as? String {
+            case "input_text", "text": return part["text"] as? String
+            default: return nil
+            }
+        }.joined(separator: "\n")
     }
 
     /// Renders the running transcript into a single prompt string, trimmed to the

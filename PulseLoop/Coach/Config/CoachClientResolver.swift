@@ -2,8 +2,7 @@ import Foundation
 
 /// Single source of truth for "which `ResponsesClient` runs, given the user's
 /// settings + stored keys." Shared by the chat view-model, the summary service,
-/// and the notification service so provider logic (including the on-device
-/// cloud-backup fallback) lives in exactly one place.
+/// and the notification service so provider logic lives in exactly one place.
 ///
 /// The returned `key` is a readiness sentinel: non-`nil` means the provider can
 /// run (used to build `CoachFeatureFlags.hasAPIKey`). For cloud providers it's
@@ -19,27 +18,13 @@ enum CoachClientResolver {
     ) -> (key: String?, client: ResponsesClient) {
         switch settings.providerMode {
         case .appleOnDevice:
+            // On-device only — no cloud backup. When the local model is usable,
+            // run it; otherwise hand back the client (it throws a clear error
+            // that surfaces in chat) and signal "not ready" so generators degrade
+            // to scripted.
             let onDevice = AppleFoundationModelsClient()
             let available = AppleOnDeviceAvailability.current.isAvailable
-            // A usable cloud backup is one whose key is actually present.
-            let backup = settings.appleFallbackProvider.flatMap { mode in
-                usableCloudClient(
-                    mode, settings: settings,
-                    openAIKeyStore: openAIKeyStore, geminiKeyStore: geminiKeyStore,
-                    openRouterKeyStore: openRouterKeyStore, openAIClientFactory: openAIClientFactory
-                )
-            }
-            if available {
-                let client: ResponsesClient = backup.map { FallbackResponsesClient(primary: onDevice, secondary: $0) } ?? onDevice
-                return ("on-device", client)
-            } else if let backup {
-                // On-device unusable on this device → run the cloud backup directly.
-                return ("on-device", backup)
-            } else {
-                // Nothing usable: hand back the on-device client (it throws a clear
-                // error) and signal "not ready" so generators degrade to scripted.
-                return (nil, onDevice)
-            }
+            return (available ? "on-device" : nil, onDevice)
         default:
             return directClient(
                 settings.providerMode, settings: settings,
@@ -77,23 +62,5 @@ enum CoachClientResolver {
             let key = (try? openAIKeyStore.readKey()) ?? nil
             return (key, openAIClientFactory(key ?? ""))
         }
-    }
-
-    /// A cloud client only when its key is present — used to decide whether the
-    /// on-device backup is actually usable.
-    private static func usableCloudClient(
-        _ mode: CoachProviderMode,
-        settings: CoachSettings,
-        openAIKeyStore: APIKeyStore,
-        geminiKeyStore: APIKeyStore,
-        openRouterKeyStore: APIKeyStore,
-        openAIClientFactory: (String) -> ResponsesClient
-    ) -> ResponsesClient? {
-        let (key, client) = directClient(
-            mode, settings: settings,
-            openAIKeyStore: openAIKeyStore, geminiKeyStore: geminiKeyStore,
-            openRouterKeyStore: openRouterKeyStore, openAIClientFactory: openAIClientFactory
-        )
-        return key != nil ? client : nil
     }
 }
