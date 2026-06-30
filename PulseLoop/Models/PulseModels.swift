@@ -180,6 +180,9 @@ final class ActivityDaily {
 
 @Model
 final class Measurement {
+    // Indexes for the hot read paths: time-window scans (timestamp), per-kind windows + latest
+    // value (kindRaw, timestamp), and demo detection (sourceRaw). Additive, non-destructive.
+    #Index<Measurement>([\.timestamp], [\.kindRaw, \.timestamp], [\.sourceRaw])
     @Attribute(.unique) var id: UUID
     var kindRaw: String
     var value: Double
@@ -341,6 +344,15 @@ final class DerivedUpdateRow {
     }
 }
 
+/// Whether the user sees metric (cm/kg/°C/km) or imperial (in/lb/°F/mi) units. Persisted as a raw
+/// string on `UserProfile.unitsRaw`; also fed to the ring's user-preferences command.
+enum UnitsPreference: String, CaseIterable, Codable, Sendable {
+    case metric
+    case imperial
+
+    var label: String { self == .metric ? "Metric" : "Imperial" }
+}
+
 @Model
 final class UserProfile {
     @Attribute(.unique) var id: UUID
@@ -349,11 +361,18 @@ final class UserProfile {
     var sex: String?
     var heightCm: Double?
     var weightKg: Double?
+    /// Display/units preference. Defaulted so existing stored profiles migrate without a data change.
+    var unitsRaw: String = UnitsPreference.metric.rawValue
     var onboardingCompleted: Bool
     var baselineCompleted: Bool
     var createdAt: Date
     var updatedAt: Date
-    
+
+    var units: UnitsPreference {
+        get { UnitsPreference(rawValue: unitsRaw) ?? .metric }
+        set { unitsRaw = newValue.rawValue }
+    }
+
     init(
         id: UUID = UUID(),
         name: String? = nil,
@@ -361,6 +380,7 @@ final class UserProfile {
         sex: String? = nil,
         heightCm: Double? = nil,
         weightKg: Double? = nil,
+        units: UnitsPreference = .metric,
         onboardingCompleted: Bool = false,
         baselineCompleted: Bool = false
     ) {
@@ -370,6 +390,7 @@ final class UserProfile {
         self.sex = sex
         self.heightCm = heightCm
         self.weightKg = weightKg
+        self.unitsRaw = units.rawValue
         self.onboardingCompleted = onboardingCompleted
         self.baselineCompleted = baselineCompleted
         self.createdAt = Date()
@@ -385,7 +406,7 @@ final class UserGoal {
     var activeMinutes: Int
     var workoutsPerWeek: Int
     var updatedAt: Date
-    
+
     init(id: UUID = UUID(), steps: Int = 10000, sleepMinutes: Int = 480, activeMinutes: Int = 45, workoutsPerWeek: Int = 4) {
         self.id = id
         self.steps = steps
@@ -393,6 +414,39 @@ final class UserGoal {
         self.activeMinutes = activeMinutes
         self.workoutsPerWeek = workoutsPerWeek
         self.updatedAt = Date()
+    }
+}
+
+/// Per-device all-day measurement configuration: how often the ring measures HR and which background
+/// vitals it records. Keyed by `Device.id` so each paired wearable keeps its own config (future-proof
+/// for multiple devices). Only devices declaring `.measurementInterval` (Colmi) act on this; the
+/// generic jring never surfaces it. All fields are defaulted so this is a safe additive migration.
+@Model
+final class DeviceMeasurementConfig {
+    @Attribute(.unique) var deviceId: UUID
+    /// All-day HR sampling interval, minutes. Colmi accepts 5…60 in 5-minute steps.
+    var hrIntervalMinutes: Int = 5
+    var hrEnabled: Bool = true
+    var spo2Enabled: Bool = true
+    var stressEnabled: Bool = true
+    var hrvEnabled: Bool = true
+    var temperatureEnabled: Bool = true
+    var updatedAt: Date = Date()
+
+    init(deviceId: UUID) {
+        self.deviceId = deviceId
+    }
+
+    /// Project to the device-agnostic value the sync engine consumes.
+    var asSettings: MeasurementSettings {
+        MeasurementSettings(
+            hrEnabled: hrEnabled,
+            hrIntervalMinutes: hrIntervalMinutes,
+            spo2Enabled: spo2Enabled,
+            stressEnabled: stressEnabled,
+            hrvEnabled: hrvEnabled,
+            temperatureEnabled: temperatureEnabled
+        )
     }
 }
 
@@ -640,15 +694,20 @@ final class CoachMessage {
     var cardsJSON: String?
     /// Encoded `PendingAction` awaiting a Confirm/Cancel tap (Milestone B).
     var pendingActionJSON: String? = nil
+    /// Encoded `[CoachAttachmentRef]` for images attached to this message. The
+    /// bytes live in `Documents/coach_attachments/`; this holds only the refs.
+    /// Optional with a default keeps the SwiftData migration lightweight.
+    var attachmentsJSON: String? = nil
     var createdAt: Date
 
-    init(id: UUID = UUID(), conversationId: UUID, role: String, body: String, cardsJSON: String? = nil, pendingActionJSON: String? = nil, createdAt: Date = Date()) {
+    init(id: UUID = UUID(), conversationId: UUID, role: String, body: String, cardsJSON: String? = nil, pendingActionJSON: String? = nil, attachmentsJSON: String? = nil, createdAt: Date = Date()) {
         self.id = id
         self.conversationId = conversationId
         self.role = role
         self.body = body
         self.cardsJSON = cardsJSON
         self.pendingActionJSON = pendingActionJSON
+        self.attachmentsJSON = attachmentsJSON
         self.createdAt = createdAt
     }
 }

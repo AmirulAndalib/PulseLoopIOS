@@ -21,6 +21,8 @@ struct PulseLoopApp: App {
     private let persistence: EventPersistenceSubscriber
     /// Retained so it keeps regenerating Today/Sleep coach summaries on new data.
     private let summaryCoordinator: CoachSummaryCoordinator
+    /// Retained so it keeps watching for on-device proactive anomaly alerts.
+    private let anomalyMonitor: CoachAnomalyMonitor
     /// Retained so it keeps recording the structured wearable diagnostics timeline.
     private let diagnostics: DiagnosticsSubscriber
     /// Retained so the UNUserNotificationCenter delegate stays alive.
@@ -63,6 +65,7 @@ struct PulseLoopApp: App {
         let subscriber = EventPersistenceSubscriber(context: container.mainContext)
         self.persistence = subscriber
         self.summaryCoordinator = CoachSummaryCoordinator(context: container.mainContext)
+        self.anomalyMonitor = CoachAnomalyMonitor(context: container.mainContext)
         let diagnostics = DiagnosticsSubscriber(context: container.mainContext)
         self.diagnostics = diagnostics
 
@@ -75,6 +78,7 @@ struct PulseLoopApp: App {
         subscriber.start()
         coordinator.start()
         summaryCoordinator.start()
+        anomalyMonitor.start()
         diagnostics.start()
 
         // Daily check-in notifications: route taps + register the background wake.
@@ -95,6 +99,9 @@ struct PulseLoopApp: App {
         }
         .modelContainer(container)
         .onChange(of: scenePhase) { _, phase in
+            // Flush any batched-but-unsaved ring writes before the app suspends so a mid-sync
+            // batch isn't lost.
+            if phase != .active { persistence.flush() }
             guard phase == .active else { return }
             // Both calls are no-ops when the AI Coach master switch is off — the
             // scheduler gates on `coachMasterEnabled`, and `runDueSlot` short
