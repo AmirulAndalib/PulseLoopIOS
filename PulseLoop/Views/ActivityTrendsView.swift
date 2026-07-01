@@ -53,19 +53,32 @@ struct ActivityTrendsView: View {
 
     /// Per-day samples for a metric in the current period, so every bar is comparable to the daily
     /// goal line. Week uses the aligned Mon–Sun 7-day trend (exactly 7 points, correct even in demo
-    /// mode). Month uses `metricRange` daily bars. Year uses `metricRange` monthly-total bars divided
-    /// by the days in each month → one "average per day that month" bar, so the 12 bars sit against
-    /// the daily goal instead of dwarfing it.
+    /// mode). Month uses `metricRange` daily bars. Year always returns a fixed 12-bucket scaffold of
+    /// the last 12 calendar months (oldest→newest), each holding that month's per-day average — months
+    /// with no data render as empty bars — so the axis is stable and the bars sit against the daily goal.
     private func samples(for metric: MetricKey, trend: [DailyMetricPoint]) -> [MetricSample] {
         if period == .sevenDays {
             return trend.map { MetricSample(timestamp: $0.date, value: $0.value) }
         }
-        let raw = MetricsService.metricRange(metric: metric, range: period, context: modelContext)
-        guard period == .twelveMonths else { return raw }
+        if period != .twelveMonths {
+            return MetricsService.metricRange(metric: metric, range: period, context: modelContext)
+        }
         let cal = Calendar.current
-        return raw.map { sample in
-            let days = cal.range(of: .day, in: .month, for: sample.timestamp)?.count ?? 30
-            return MetricSample(timestamp: sample.timestamp, value: days > 0 ? sample.value / Double(days) : 0)
+        // Monthly totals keyed by year-month from the existing fetch.
+        let raw = MetricsService.metricRange(metric: metric, range: .twelveMonths, context: modelContext)
+        var totals: [DateComponents: Double] = [:]
+        for s in raw {
+            let key = cal.dateComponents([.year, .month], from: s.timestamp)
+            totals[key, default: 0] += s.value
+        }
+        // Build the last 12 months, oldest first, filling gaps with 0.
+        let thisMonthStart = cal.date(from: cal.dateComponents([.year, .month], from: Date())) ?? Date()
+        return (0..<12).reversed().compactMap { offset -> MetricSample? in
+            guard let monthStart = cal.date(byAdding: .month, value: -offset, to: thisMonthStart) else { return nil }
+            let key = cal.dateComponents([.year, .month], from: monthStart)
+            let days = cal.range(of: .day, in: .month, for: monthStart)?.count ?? 30
+            let perDay = days > 0 ? (totals[key] ?? 0) / Double(days) : 0
+            return MetricSample(timestamp: monthStart, value: perDay)
         }
     }
 
@@ -102,7 +115,10 @@ struct ActivityTrendsView: View {
     }
 
     private func caloriesSection(_ summary: TodaySummary) -> some View {
-        let samples = samples(for: .calories, trend: summary.trends.calories7d)
+        // If the ring doesn't track active energy, show the section empty (— cal/day, no bars) rather
+        // than raw ring values — matches the summary widget and the Today page's `isVisible` gating.
+        let available = MetricsService.isVisible(.calories, context: modelContext)
+        let samples = available ? samples(for: .calories, trend: summary.trends.calories7d) : []
         let values = samples.map(\.value)
         let avg = dailyAverage(values)
         return metricSection(
@@ -130,12 +146,14 @@ struct ActivityTrendsView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
                 Text(title)
-                    .font(.system(size: 16, weight: .bold))
+                    .font(.system(size: 20, weight: .bold))
                     .foregroundStyle(color)
                 Spacer()
                 Text(average ?? "— /day")
-                    .font(.system(size: 15, weight: .semibold)).monospacedDigit()
+                    .font(.system(size: 19, weight: .semibold)).monospacedDigit()
                     .foregroundStyle(average == nil ? PulseColors.textMuted : PulseColors.textPrimary)
+                    .minimumScaleFactor(0.7)
+                    .lineLimit(1)
             }
             Text(rangeLabel(samples: samples))
                 .font(.system(size: 12))
@@ -160,11 +178,13 @@ struct ActivityTrendsView: View {
     // MARK: - Derived values
 
     /// The headline average-per-day: the mean of the per-day bar values shown. Bars are already daily
-    /// (Week/Month) or per-month daily-averages (Year), so this reads as "typical day" for the range.
+    /// (Week/Month) or per-month daily-averages (Year). For Year the 12-month scaffold pads missing
+    /// months with 0, so average only the months that actually have data (mirrors "days with data").
     /// Empty ⇒ nil (rendered as "— /day"); never divides by zero.
     private func dailyAverage(_ values: [Double]) -> Double? {
-        guard !values.isEmpty else { return nil }
-        return values.reduce(0, +) / Double(values.count)
+        let considered = period == .twelveMonths ? values.filter { $0 > 0 } : values
+        guard !considered.isEmpty else { return nil }
+        return considered.reduce(0, +) / Double(considered.count)
     }
 
     // MARK: - Labels
@@ -185,8 +205,8 @@ struct ActivityTrendsView: View {
         }
     }
 
-    /// Sparse x-axis labels keyed by bar index. Week: every day (M–S). Month: anchor days (1/8/15/22/29
-    /// by day-of-month). Year: month initials J–D.
+    /// Sparse x-axis labels keyed by bar index. Week: every day (M–S). Month: a date roughly every
+    /// ~4 days (denser than week starts). Year: 3-letter month for all 12 buckets.
     private func axisLabels(count: Int, samples: [MetricSample]) -> [Int: String] {
         let cal = Calendar.current
         switch period {
@@ -203,21 +223,21 @@ struct ActivityTrendsView: View {
             }
             return map
         case .twelveMonths:
-            let letters = ["J", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"]
+            let months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
             var map: [Int: String] = [:]
             for i in 0..<count {
                 if let ts = samples[safe: i]?.timestamp {
-                    map[i] = letters[cal.component(.month, from: ts) - 1]
+                    map[i] = months[cal.component(.month, from: ts) - 1]
                 }
             }
             return map
-        default: // .thirtyDays — label anchor days-of-month
+        default: // .thirtyDays — label the day-of-month at a stable step (~every 4th bar)
             var map: [Int: String] = [:]
-            let anchors: Set<Int> = [1, 8, 15, 22, 29]
-            for i in 0..<count {
+            guard count > 0 else { return map }
+            let step = Swift.max(1, Int((Double(count) / 7).rounded()))
+            for i in stride(from: 0, to: count, by: step) {
                 if let ts = samples[safe: i]?.timestamp {
-                    let day = cal.component(.day, from: ts)
-                    if anchors.contains(day) { map[i] = "\(day)" }
+                    map[i] = "\(cal.component(.day, from: ts))"
                 }
             }
             return map
@@ -243,15 +263,26 @@ private struct TrendBarChart: View {
         return target > 0 ? target : 1
     }
 
+    /// Slightly thicker, count-aware bars: chunky for few bars (Week/Year), thinner but still solid
+    /// for the dense Month view.
     private var barWidth: MarkDimension {
-        values.count > 14 ? .fixed(4) : .automatic
+        switch values.count {
+        case 0...12: return .fixed(14)
+        case 13...20: return .fixed(10)
+        default: return .fixed(6)
+        }
     }
+
+    /// Stable per-bar category key (zero-padded so the string sort matches index order). A categorical
+    /// x-axis puts bars and their labels on the same band, so they align by construction.
+    private func key(_ index: Int) -> String { String(format: "%03d", index) }
+    private var orderedKeys: [String] { (0..<values.count).map(key) }
 
     var body: some View {
         Chart {
             ForEach(Array(values.enumerated()), id: \.offset) { index, value in
                 BarMark(
-                    x: .value("index", index),
+                    x: .value("bar", key(index)),
                     y: .value("value", value),
                     width: barWidth
                 )
@@ -273,10 +304,10 @@ private struct TrendBarChart: View {
         }
         .chartYScale(domain: 0...chartMax)
         .chartYAxis(.hidden)
-        .chartXScale(domain: -0.5...(Double(Swift.max(values.count, 1)) - 0.5))
+        .chartXScale(domain: orderedKeys) // fixed category order = stable slots, empty bars keep their place
         .chartXAxis {
-            AxisMarks(values: Array(axisLabels.keys.sorted())) { value in
-                if let index = value.as(Int.self), let label = axisLabels[index] {
+            AxisMarks(values: orderedKeys) { value in
+                if let k = value.as(String.self), let index = Int(k), let label = axisLabels[index] {
                     AxisValueLabel {
                         Text(label).font(.system(size: 10)).foregroundStyle(PulseColors.textMuted)
                     }

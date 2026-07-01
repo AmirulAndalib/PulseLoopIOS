@@ -31,7 +31,11 @@ struct ActivityView: View {
                     StaleSessionRecoveryCard(sessions: stale)
                 }
 
-                DailyActivitySummaryCard(summary: summary, units: units) {
+                DailyActivitySummaryCard(
+                    summary: summary,
+                    units: units,
+                    caloriesAvailable: MetricsService.isVisible(.calories, context: modelContext)
+                ) {
                     path.append(AppRoute.activityTrends)
                 }
 
@@ -148,7 +152,14 @@ struct ActivityView: View {
 struct DailyActivitySummaryCard: View {
     let summary: TodaySummary
     let units: UnitsPreference
+    /// Whether the paired ring supports active-energy tracking. When false, calories are treated as
+    /// unavailable (em dash + inactive ring) rather than showing whatever raw value the ring reports.
+    var caloriesAvailable: Bool = true
     var onTap: () -> Void
+
+    /// Calories only when the device actually tracks them; otherwise nil so text shows "—" and the
+    /// ring stays a muted track (matches the Today page's `isVisible(.calories)` gating).
+    private var effectiveCalories: Double? { caloriesAvailable ? summary.calories : nil }
 
     private var distanceUnit: String { UnitsFormatter.distance(meters: 0, units: units).unit }
     private var distanceValue: String? { summary.distanceMeters.map { UnitsFormatter.distance(meters: $0, units: units).value } }
@@ -169,14 +180,14 @@ struct DailyActivitySummaryCard: View {
                             metric(label: "Steps", value: summary.steps.map { $0.formatted() } ?? "—", unit: nil, color: PulseColors.steps)
                             metric(label: "Distance", value: distanceValue ?? "—", unit: distanceValue == nil ? nil : distanceUnit, color: PulseColors.distance)
                         }
-                        metric(label: "Calories", value: summary.calories.map { Int($0).formatted() } ?? "—", unit: summary.calories == nil ? nil : "cal", color: PulseColors.calories)
+                        metric(label: "Calories", value: effectiveCalories.map { Int($0).formatted() } ?? "—", unit: effectiveCalories == nil ? nil : "cal", color: PulseColors.calories)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                     ActivityRingsView(rings: [
                         ActivityRing(value: summary.steps.map(Double.init), goal: Double(summary.goals.stepsDaily), color: PulseColors.steps),
                         ActivityRing(value: distanceDisplay, goal: distanceGoalDisplay, color: PulseColors.distance),
-                        ActivityRing(value: summary.calories, goal: Double(summary.goals.caloriesDaily), color: PulseColors.calories)
+                        ActivityRing(value: effectiveCalories, goal: Double(summary.goals.caloriesDaily), color: PulseColors.calories)
                     ], size: 112, stroke: 11, spacing: 5)
                     .frame(width: 112, height: 112)
                 }
