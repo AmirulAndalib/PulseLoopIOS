@@ -84,6 +84,8 @@ struct RootAppView: View {
                     GoalsSettingsView()
                 case .settingsVitals:
                     VitalsSettingsView()
+                case .settingsToday:
+                    TodaySettingsView()
                 case .settingsCalibration:
                     CalibrationSettingsView()
                 case .settingsPrivacyData:

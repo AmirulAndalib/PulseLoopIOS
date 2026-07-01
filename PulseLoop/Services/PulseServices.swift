@@ -6,7 +6,7 @@ enum MetricsService {
     private static let calibrationDays = 7
     private static let minimumTrendDays = 3
     
-    static func buildTodaySummary(context: ModelContext) -> TodaySummary {
+    static func buildTodaySummary(context: ModelContext, scope: MetricScope = .vitals) -> TodaySummary {
         let calendar = Calendar.current
         let activityRows = MetricsRepository.activityRows(context: context)
         let device = DeviceRepository.current(context: context)
@@ -25,8 +25,8 @@ enum MetricsService {
         let spo2Samples = rangeSamples(kind: .spo2, range: .twentyFourHours, context: context)
         // Display copies go through the same `displaySamples` transform Vitals applies (resolution
         // downsampling). Byte-identical to `metricRange`'s output, so the sparkline shape matches too.
-        let hrSamplesDisplay = displaySamples(hrSamples, range: .twentyFourHours)
-        let spo2SamplesDisplay = displaySamples(spo2Samples, range: .twentyFourHours)
+        let hrSamplesDisplay = displaySamples(hrSamples, range: .twentyFourHours, scope: scope)
+        let spo2SamplesDisplay = displaySamples(spo2Samples, range: .twentyFourHours, scope: scope)
         // Latest values are the newest reading of each kind regardless of age (the old code took
         // `.last` of the FULL kind history, not the 24h window) — fetch them independently so a
         // last reading older than 24h still surfaces.
@@ -83,7 +83,8 @@ enum MetricsService {
         )
     }
     
-    static func metricRange(metric: MetricKey, range: MetricRange, context: ModelContext) -> [MetricSample] {
+    static func metricRange(metric: MetricKey, range: MetricRange, context: ModelContext,
+                            scope: MetricScope = .vitals) -> [MetricSample] {
         let raw: [MetricSample]
         switch metric {
         case .heartRate:
@@ -109,7 +110,7 @@ enum MetricsService {
         default:
             return []
         }
-        return displaySamples(raw, range: range)
+        return displaySamples(raw, range: range, scope: scope)
     }
 
     /// The display transform applied to already-fetched, windowed samples: bucket-average per the
@@ -117,8 +118,9 @@ enum MetricsService {
     /// source of truth for the vitals sparkline/chart shape, so any caller that runs it over the same
     /// samples gets a byte-identical result — used by both `metricRange` (Vitals) and
     /// `buildTodaySummary` (Today) so the two pages never disagree on a metric's range/graph.
-    static func displaySamples(_ raw: [MetricSample], range: MetricRange) -> [MetricSample] {
-        let targetBuckets = MetricPrefsStore.shared.settings.resolution.targetBuckets(for: range)
+    static func displaySamples(_ raw: [MetricSample], range: MetricRange,
+                               scope: MetricScope = .vitals) -> [MetricSample] {
+        let targetBuckets = MetricPrefsStore.shared.resolution(for: scope).targetBuckets(for: range)
         return MetricDownsampler.bucketAverage(raw, targetBuckets: targetBuckets)
     }
     
@@ -180,9 +182,9 @@ enum MetricsService {
     /// Whether a metric should be rendered right now: the device must support it (capability gate
     /// **first**, so a hidden-but-unsupported vital can never be force-shown) AND the user must not have
     /// hidden it. Every vitals call site funnels through this so visibility stays consistent app-wide.
-    static func isVisible(_ metric: MetricKey, context: ModelContext) -> Bool {
+    static func isVisible(_ metric: MetricKey, context: ModelContext, scope: MetricScope = .vitals) -> Bool {
         guard supports(metric, context: context) else { return false }
-        return !MetricPrefsStore.shared.isHidden(metric)
+        return !MetricPrefsStore.shared.isHidden(metric, scope: scope)
     }
     
     static func fetchDevices(_ context: ModelContext) -> [Device] {

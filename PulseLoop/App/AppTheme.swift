@@ -18,6 +18,7 @@ enum AppRoute: Hashable {
     case settingsActivityTracking
     case settingsGoals
     case settingsVitals
+    case settingsToday
     case settingsCalibration
     case settingsPrivacyData
     case settingsAbout

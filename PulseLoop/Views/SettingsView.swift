@@ -64,9 +64,16 @@ struct SettingsView: View {
                 ) { path.append(AppRoute.settingsWearable) }
 
                 SettingsCategoryRow(
+                    icon: "circle.circle",
+                    tint: PulseColors.accent,
+                    title: "Today",
+                    subtitle: "Which tiles to show and chart detail on Today"
+                ) { path.append(AppRoute.settingsToday) }
+
+                SettingsCategoryRow(
                     icon: "heart.text.square",
                     tint: PulseColors.heartRate,
-                    title: "Vitals & Display",
+                    title: "Vitals",
                     subtitle: "Which vitals to show and chart detail"
                 ) { path.append(AppRoute.settingsVitals) }
 
