@@ -346,6 +346,8 @@ struct SleepDurationHistogramChart: View {
     let bars: [SleepBar]
     var goalMin: Int?
     var slim: Bool = false
+    var barWidth: CGFloat? = nil
+    var weekBars: Bool = false
     var height: CGFloat = 210
 
     private var yMax: Double {
@@ -355,16 +357,23 @@ struct SleepDurationHistogramChart: View {
     }
 
     var body: some View {
+        // Use a unique key per bar so Swift Charts treats each as its own category,
+        // centering the bar and its label automatically (same pattern as StepBarsChart).
+        let indexed: [(Int, SleepBar)] = Array(bars.enumerated())
         let interval = bars.count > 14 ? max(1, bars.count / 6) : 1
+        let showKeys: [String] = stride(from: 0, to: bars.count, by: interval).map { "\($0):\(bars[$0].label)" }
+        let w: MarkDimension = weekBars ? .ratio(0.7) : (barWidth.map { .fixed($0) } ?? (slim ? .fixed(7) : .automatic))
+        let r: CGFloat = (slim || weekBars) ? 3 : 6
         Chart {
-            ForEach(Array(bars.enumerated()), id: \.offset) { index, bar in
+            ForEach(indexed, id: \.0) { index, bar in
+                let key = "\(index):\(bar.label)"
                 if bar.present, let duration = bar.durationMin {
                     BarMark(
-                        x: .value("label", index),
+                        x: .value("day", key),
                         y: .value("min", duration),
-                        width: slim ? 7 : .automatic
+                        width: w
                     )
-                    .clipShape(UnevenRoundedRectangle(topLeadingRadius: slim ? 3 : 6, topTrailingRadius: slim ? 3 : 6))
+                    .clipShape(UnevenRoundedRectangle(topLeadingRadius: r, topTrailingRadius: r))
                     .foregroundStyle(
                         LinearGradient(
                             colors: [Color(hex: "#8B7CFF"), Color(hex: "#3F2DD8")],
@@ -374,11 +383,11 @@ struct SleepDurationHistogramChart: View {
                 } else {
                     // Faint full-height placeholder so gaps read as "untracked".
                     BarMark(
-                        x: .value("label", index),
+                        x: .value("day", key),
                         y: .value("min", yMax),
-                        width: slim ? 7 : .automatic
+                        width: w
                     )
-                    .clipShape(UnevenRoundedRectangle(topLeadingRadius: slim ? 3 : 6, topTrailingRadius: slim ? 3 : 6))
+                    .clipShape(UnevenRoundedRectangle(topLeadingRadius: r, topTrailingRadius: r))
                     .foregroundStyle(PulseColors.accent.opacity(0.05))
                 }
             }
@@ -391,13 +400,17 @@ struct SleepDurationHistogramChart: View {
         .chartYScale(domain: 0...yMax)
         .chartYAxis(.hidden)
         .chartXAxis {
-            AxisMarks(values: .automatic(desiredCount: max(2, bars.count / interval))) { value in
-                if let index = value.as(Int.self), bars.indices.contains(index) {
+            AxisMarks(values: showKeys) { value in
+                if let key = value.as(String.self),
+                   let label = key.split(separator: ":").last.map(String.init) {
                     AxisValueLabel {
-                        Text(bars[index].label).foregroundStyle(PulseColors.textMuted)
+                        Text(label).foregroundStyle(PulseColors.textMuted)
                     }
                 }
             }
+        }
+        .chartPlotStyle { plot in
+            plot.padding(.horizontal, weekBars ? 0 : 4)
         }
         .frame(height: height)
         .padding(8)

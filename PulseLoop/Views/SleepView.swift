@@ -125,14 +125,14 @@ struct SleepView: View {
 
         SleepHeroCardView(
             label: SleepInsights.rangeHeroLabel[range] ?? "Sleep",
-            value: enough ? "\(SleepFormat.duration(avgMin)) avg" : noData.value,
+            value: enough ? SleepFormat.duration(avgMin) : noData.value,
             support: heroSupport,
             score: enough ? avgScore : nil,
             scoreLabel: enough ? avgScore.map { SleepScore.qualityLabel($0).rawValue } : nil,
             noData: !enough
         )
         VisualizationCard(eyebrow: "Duration", title: vizTitle, legend: false) {
-            SleepDurationHistogramChart(bars: bars, goalMin: goalMin, slim: range == .month)
+            SleepDurationHistogramChart(bars: bars, goalMin: goalMin, slim: range == .month, barWidth: range == .week ? 30 : nil, weekBars: range == .week)
         }
         SleepStageSummaryCardsView(
             prefix: "Avg ",

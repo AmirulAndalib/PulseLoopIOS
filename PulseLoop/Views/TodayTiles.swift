@@ -56,8 +56,8 @@ struct TodayTile<Content: View>: View {
 // MARK: - Activity tile (steps + distance + calories → one concentric loop)
 
 /// Collapses the three activity metrics into the same concentric progress loop the Activity page
-/// uses (`ActivityRingsView`), sized to fit a half-width tile. No numbers — the loop IS the summary;
-/// tap opens the Activity tab for detail.
+/// uses (`ActivityRingsView`), sized to fit a half-width tile. Labels are colored in ring color,
+/// values are white — matching the Activity page widget style.
 struct ActivityTileView: View {
     let summary: TodaySummary
     let units: UnitsPreference
