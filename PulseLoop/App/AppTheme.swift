@@ -86,6 +86,7 @@ enum PulseColors {
     static let zoneSoftAmber = Color(hex: "#FFD9A0") // slight caution (distinct from amber)
     static let zoneOrange = Color(hex: "#FF8A4C")   // elevated / low-oxygen / stage 1
     static let zoneRed = Color(hex: "#FF4D6D")      // high / critical
+    static let zoneCritical = Color(hex: "#FF1744") // brighter/deeper red for HR high vs the HR accent
     static let borderSubtle = Color.white.opacity(0.08)
     static let borderStrong = Color.white.opacity(0.16)
 }

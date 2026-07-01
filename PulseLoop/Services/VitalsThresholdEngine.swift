@@ -154,7 +154,7 @@ enum VitalsThresholdEngine {
                        severity: .watch, colorToken: .amber,
                        explanation: "Above the typical resting range. Activity, caffeine, or stress can raise it."),
             MetricZone(id: "hr.high", label: "High", lower: 120, upper: nil,
-                       severity: .high, colorToken: .red,
+                       severity: .high, colorToken: .brightRed,
                        explanation: "A high resting heart rate. Talk to a clinician if it persists at rest."),
         ]
     }

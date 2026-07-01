@@ -126,25 +126,50 @@ struct VitalBloodPressureCard: View {
             if model.isEmpty || systolic == nil || diastolic == nil {
                 VitalEmptyState(metric: .bloodPressure)
             } else {
-                DualVitalRingGauge(
-                    systolic: systolic!,
-                    diastolic: diastolic!,
-                    systolicDomain: 80...190,
-                    diastolicDomain: 50...130,
-                    systolicZones: systolicZones,
-                    diastolicZones: diastolicZones,
-                    statusLabel: model.statusText,
-                    statusColor: model.statusColor,
-                    size: 200
-                )
-                .frame(maxWidth: .infinity)
-                if let confidence = model.confidenceLabel {
-                    Text(confidence)
-                        .font(.system(size: 11)).foregroundStyle(PulseColors.textMuted)
-                        .frame(maxWidth: .infinity, alignment: .center)
+                // Two separate compact gauges — systolic on the left, diastolic on the right — instead
+                // of the cluttered concentric dual ring.
+                HStack(spacing: 16) {
+                    ringColumn(
+                        title: "Systolic",
+                        value: systolic!,
+                        domain: 80...190,
+                        zones: systolicZones,
+                        fallback: PulseColors.bloodPressure
+                    )
+                    ringColumn(
+                        title: "Diastolic",
+                        value: diastolic!,
+                        domain: 50...130,
+                        zones: diastolicZones,
+                        fallback: PulseColors.bloodPressure.opacity(0.7)
+                    )
                 }
+                .frame(maxWidth: .infinity)
             }
         }
+    }
+
+    private func ringColumn(title: String, value: Double, domain: ClosedRange<Double>,
+                            zones: [MetricZone], fallback: Color) -> some View {
+        // Color the value arc by the zone the reading falls in (so a normal reading is green, not the
+        // metric's pink accent). Falls back to the metric color if no zone matches.
+        let valueColor = zones.first(where: { $0.contains(value) })?.color ?? fallback
+        return VStack(spacing: 8) {
+            VitalRingGauge(
+                value: value,
+                domain: domain,
+                zones: zones,
+                valueColor: valueColor,
+                centerValue: "\(Int(value))",
+                centerUnit: "mmHg",
+                size: 130,
+                lineWidth: 11
+            )
+            Text(title.uppercased())
+                .font(.system(size: 11, weight: .semibold)).tracking(0.8)
+                .foregroundStyle(PulseColors.textMuted)
+        }
+        .frame(maxWidth: .infinity)
     }
 }
 

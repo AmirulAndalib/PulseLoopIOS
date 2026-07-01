@@ -121,6 +121,7 @@ enum VitalColorToken: Equatable {
     case softAmber     // slight caution
     case orange        // elevated / low-oxygen / stage 1
     case red           // high / critical
+    case brightRed     // a deeper/brighter red where the plain accent is already reddish (HR high)
     case neutral       // no information (building baseline)
     case metricAccent(MetricKind)
 
@@ -133,6 +134,7 @@ enum VitalColorToken: Equatable {
         case .softAmber: return PulseColors.zoneSoftAmber
         case .orange: return PulseColors.zoneOrange
         case .red: return PulseColors.zoneRed
+        case .brightRed: return PulseColors.zoneCritical
         case .neutral: return PulseColors.textMuted
         case .metricAccent(let metric): return metric.accentColor
         }

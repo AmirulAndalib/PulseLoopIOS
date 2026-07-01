@@ -191,7 +191,9 @@ enum VitalsCardFactory {
             metric: .bloodPressure, title: MetricKind.bloodPressure.title,
             valueText: valueText, unitText: (sys != nil) ? "mmHg" : nil,
             statusText: interp?.displayLabel ?? "No reading", statusColor: interp?.statusColor ?? PulseColors.textMuted,
-            subtitleText: (sys != nil && dia != nil) ? "Systolic \(Int(sys!)) · Diastolic \(Int(dia!))" : nil,
+            // Systolic/diastolic values are now shown under each of the two gauges on the card, so the
+            // subtitle would just repeat them.
+            subtitleText: nil,
             samples: chart, zones: VitalsThresholdEngine.zones(for: .bloodPressure, profile: profile),
             yDomain: 80...190, referenceBands: [], dashedRules: [],
             trend: TrendSummary.compute(samples: chart, metric: .bloodPressure, unitLabel: "mmHg"),

@@ -67,6 +67,12 @@ struct MetricDetailView: View {
         let chart = ChartSampleBuilder.from(primary)
         let baseline = baselineForChart
         VStack(alignment: .leading, spacing: 8) {
+            if !metric.unit.isEmpty {
+                Text(metric.unit)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(PulseColors.textMuted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
             if chart.count < 2 {
                 Text("Not enough data for this period.")
                     .font(.system(size: 13)).foregroundStyle(PulseColors.textMuted)
@@ -150,16 +156,11 @@ struct MetricDetailView: View {
                 .font(.system(size: 11, weight: .medium)).tracking(0.6)
                 .foregroundStyle(PulseColors.textMuted)
                 .lineLimit(1)
-            HStack(alignment: .firstTextBaseline, spacing: 3) {
-                Text(value)
-                    .font(.system(size: 32, weight: .semibold, design: .rounded)).monospacedDigit()
-                    .foregroundStyle(PulseColors.textPrimary)
-                    .minimumScaleFactor(0.5)
-                    .lineLimit(1)
-                if !metric.unit.isEmpty {
-                    Text(metric.unit).font(.system(size: 11, weight: .medium)).foregroundStyle(PulseColors.textMuted)
-                }
-            }
+            Text(value)
+                .font(.system(size: 32, weight: .semibold, design: .rounded)).monospacedDigit()
+                .foregroundStyle(PulseColors.textPrimary)
+                .minimumScaleFactor(0.5)
+                .lineLimit(1)
         }
         .frame(maxWidth: .infinity)
     }
@@ -269,7 +270,7 @@ struct MetricDetailView: View {
     }
 
     private var isEstimatedMetric: Bool {
-        metric == .glucose || metric == .bloodPressure
+        metric == .glucose
     }
 
     private var explainerText: String {
