@@ -312,6 +312,51 @@ struct ProgressRingView<Center: View>: View {
     }
 }
 
+// MARK: - Concentric activity rings (Daily activity summary)
+
+/// One ring's inputs. `value == nil` means the metric is unavailable → track only (no arc).
+struct ActivityRing {
+    let value: Double?
+    let goal: Double
+    let color: Color
+
+    /// Clamped 0…1 progress; safe against nil value and zero/negative goal.
+    var progress: Double {
+        guard let value, goal > 0 else { return 0 }
+        return Swift.min(1, Swift.max(0, value / goal))
+    }
+}
+
+/// Apple-Fitness-style concentric progress rings. Outer→inner in the order passed in. Each ring draws
+/// a muted background track plus a rounded-cap progress arc starting at 12 o'clock, moving clockwise,
+/// visually capped at a full circle (the numeric value elsewhere still shows real over-100% totals).
+struct ActivityRingsView: View {
+    /// Outer ring first. Typically [steps, distance, calories].
+    let rings: [ActivityRing]
+    var size: CGFloat = 116
+    var stroke: CGFloat = 10
+    /// Gap between concentric rings.
+    var spacing: CGFloat = 5
+
+    var body: some View {
+        ZStack {
+            ForEach(Array(rings.enumerated()), id: \.offset) { index, ring in
+                let inset = CGFloat(index) * (stroke + spacing)
+                let ringSize = size - inset * 2
+                ZStack {
+                    Circle().stroke(PulseColors.elevated, lineWidth: stroke)
+                    Circle()
+                        .trim(from: 0, to: ring.progress)
+                        .stroke(ring.color, style: StrokeStyle(lineWidth: stroke, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                }
+                .frame(width: ringSize, height: ringSize)
+            }
+        }
+        .frame(width: size, height: size)
+    }
+}
+
 // MARK: - Weekly pill calendar (Activity weekly goal)
 
 struct WeeklyDay: Identifiable {
@@ -542,7 +587,7 @@ struct ActivityKind: Identifiable {
 
 enum ActivityMeta {
     /// Canonical types in display order (matches web `ACTIVITY_ORDER`).
-    static let order = ["walk", "run", "cycle", "gym", "squash", "sport", "yoga", "hike", "other"]
+    static let order = ["walk", "run", "cycle", "gym", "squash", "sport", "yoga", "dance", "hike", "other"]
 
     private static let table: [String: ActivityKind] = [
         "walk":   ActivityKind(type: "walk",   label: "Walk",   helper: "Outdoor or indoor walk",     symbol: "figure.walk",          gpsCapable: true),
@@ -552,6 +597,7 @@ enum ActivityMeta {
         "squash": ActivityKind(type: "squash", label: "Squash", helper: "Court session",              symbol: "figure.tennis",        gpsCapable: false),
         "sport":  ActivityKind(type: "sport",  label: "Sport",  helper: "General sport",              symbol: "figure.soccer",        gpsCapable: true),
         "yoga":   ActivityKind(type: "yoga",   label: "Yoga",   helper: "Mobility or stretching",     symbol: "figure.yoga",          gpsCapable: false),
+        "dance":  ActivityKind(type: "dance",  label: "Dance",  helper: "Studio, cardio, or freestyle", symbol: "figure.dance",       gpsCapable: false),
         "hike":   ActivityKind(type: "hike",   label: "Hike",   helper: "Trail or long walk",         symbol: "figure.hiking",        gpsCapable: true),
         "other":  ActivityKind(type: "other",  label: "Other",  helper: "Custom activity",            symbol: "sparkles",             gpsCapable: false)
     ]

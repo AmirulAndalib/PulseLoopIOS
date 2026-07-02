@@ -21,6 +21,8 @@ struct PulseLoopApp: App {
     private let persistence: EventPersistenceSubscriber
     /// Retained so it keeps regenerating Today/Sleep coach summaries on new data.
     private let summaryCoordinator: CoachSummaryCoordinator
+    /// Retained so it keeps watching for on-device proactive anomaly alerts.
+    private let anomalyMonitor: CoachAnomalyMonitor
     /// Retained so it keeps recording the structured wearable diagnostics timeline.
     private let diagnostics: DiagnosticsSubscriber
     /// Retained so the UNUserNotificationCenter delegate stays alive.
@@ -50,6 +52,12 @@ struct PulseLoopApp: App {
         // One-time cleanup of activity totals inflated by the old accumulator bug.
         ActivityService.migrateInflatedActivityIfNeeded(context: container.mainContext)
 
+        // A persisted "connected" state can't survive a restart — the live link is gone. Reset it so
+        // the UI never shows a false "Connected" until a real connection re-confirms.
+        if !runningTests {
+            DeviceRepository.resetStaleConnectionState(context: container.mainContext)
+        }
+
         // Don't bring up CoreBluetooth under tests (see `isRunningUnitTests`).
         let client = RingBLEClient(startManager: !runningTests)
         let coordinator = RingSyncCoordinator(client: client, context: container.mainContext)
@@ -63,6 +71,7 @@ struct PulseLoopApp: App {
         let subscriber = EventPersistenceSubscriber(context: container.mainContext)
         self.persistence = subscriber
         self.summaryCoordinator = CoachSummaryCoordinator(context: container.mainContext)
+        self.anomalyMonitor = CoachAnomalyMonitor(context: container.mainContext)
         let diagnostics = DiagnosticsSubscriber(context: container.mainContext)
         self.diagnostics = diagnostics
 
@@ -75,6 +84,7 @@ struct PulseLoopApp: App {
         subscriber.start()
         coordinator.start()
         summaryCoordinator.start()
+        anomalyMonitor.start()
         diagnostics.start()
 
         // Daily check-in notifications: route taps + register the background wake.
@@ -99,6 +109,12 @@ struct PulseLoopApp: App {
             // batch isn't lost.
             if phase != .active { persistence.flush() }
             guard phase == .active else { return }
+            // Foreground reconnect: the OS can silently tear down the BLE link while suspended without
+            // delivering a disconnect, leaving us "connected" but dead. On every resume, re-link the
+            // last-known ring if it isn't actually connected. (Android foreground-reconnect parity.)
+            if bleClient.hasLastKnownRing, bleClient.state != .connected {
+                bleClient.connectLastKnown()
+            }
             // Both calls are no-ops when the AI Coach master switch is off — the
             // scheduler gates on `coachMasterEnabled`, and `runDueSlot` short
             // -circuits via the feature-flags gate.
