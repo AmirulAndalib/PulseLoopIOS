@@ -544,6 +544,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = PulseLoop/Info.plist;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.healthcare-fitness";
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "PulseLoop connects to your SMART_RING to sync activity, heart rate, SpO2, and sleep.";
 				INFOPLIST_KEY_NSBluetoothPeripheralUsageDescription = "PulseLoop connects to your SMART_RING to sync activity, heart rate, SpO2, and sleep.";
 				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "PulseLoop keeps recording your workout route in the background while a workout is active.";
@@ -583,6 +584,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = PulseLoop/Info.plist;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.healthcare-fitness";
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "PulseLoop connects to your SMART_RING to sync activity, heart rate, SpO2, and sleep.";
 				INFOPLIST_KEY_NSBluetoothPeripheralUsageDescription = "PulseLoop connects to your SMART_RING to sync activity, heart rate, SpO2, and sleep.";
 				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "PulseLoop keeps recording your workout route in the background while a workout is active.";

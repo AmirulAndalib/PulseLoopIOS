@@ -47,29 +47,15 @@ instructions.
    It's stored in `EncryptedSharedPreferences` and only used to call the model
    you choose.
 
-## What the Android port adds
+## Where the ports differ
 
-Beyond the shared dashboards and AI Coach, the Android build includes extra
-features that aren't (yet) in the iOS app:
+The two ports share the same reverse-engineered BLE protocols. The main differences today: iOS has the AI Coach (which Android
+doesn't).
 
-- **Full `0x24` sensor decoding** — fatigue, stress, blood sugar, and HRV from
-  the combined-measurement packet.
-- **Ring configuration & calibration** — user profile (age/sex/height/weight),
-  BP cuff-reference calibration, and a blood-sugar lab offset, all in Settings.
-- **Bind/unbind protocol** — proper ring claiming on connect and release on
-  forget, so the ring re-advertises for other apps.
-- **Connection reliability** — keepalive pings, a write-ACK timeout, and a
-  connection watchdog that prevents silent disconnects.
-- **Vitals detail screens** — tap any metric for a trend chart, period selector,
-  stat tiles, and a color-coded threshold bar.
-- **Threshold bars everywhere** — color-coded reference ranges (Good → Normal →
-  Borderline → High) on every vitals panel.
-- **Combined measurement button** — one tap for BP + SpO₂ + stress + fatigue +
-  blood sugar with a countdown.
-- **Pull-to-refresh** — triggers an immediate ring sync from the Today dashboard.
-
-For the complete, current breakdown, see the
-[iOS vs Android comparison](../platforms/ios-vs-android.md).
+Because features land on each platform at different times, this list changes
+often. Rather than duplicate it here, see the living
+**[iOS vs Android comparison](../platforms/ios-vs-android.md)** for the current,
+authoritative breakdown.
 
 ## Architecture at a glance
 

@@ -70,10 +70,6 @@ blood sugar calibration, support the Colmi QRing, and share the same connection
 reliability work (write-ACK timeouts, watchdogs, reconnect, proper unbind on
 forget).
 
-A couple of Colmi-specific decodes are still Android-only: REM sleep detection
-and skin temperature, both read through the Colmi V2 big-data protocol. These
-are minor and expected to land on iOS.
-
 ## Platform-native capabilities
 
 A few differences come straight from the platform each port runs on:
@@ -81,11 +77,3 @@ A few differences come straight from the platform each port runs on:
 - **On-device AI** is iOS-only, since it uses Apple's Foundation Models.
 - **Live status while measuring** uses the Dynamic Island and a Live Activity on
   iOS, and a foreground-service notification on Android.
-
-## Summary
-
-iOS leads on the AI Coach (multiple providers, on-device model, multimodal
-input) and has caught up on dashboard design with its recent UI overhaul.
-Android still leads on a handful of vitals detail screens and a couple of
-Colmi-specific decodes. The low-level protocol, calibration, and connection
-reliability are the same on both.
