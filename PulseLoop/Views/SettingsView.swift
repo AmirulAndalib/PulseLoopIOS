@@ -7,6 +7,8 @@ struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(RingBLEClient.self) private var ble
     @State private var coachStore = CoachSettingsStore.shared
+    /// Unlocked by tapping the version 7× in About; shows the Developer row.
+    @AppStorage("developerUnlocked") private var developerUnlocked = false
     @Binding var path: NavigationPath
 
     /// Capabilities of the live device (preferred) or the last stored device, used to decide whether
@@ -115,11 +117,12 @@ struct SettingsView: View {
                 path.append(AppRoute.settingsCalibration)
             })
         }
-        #if DEBUG
-        rows.append(SettingsRowItem(icon: "ladybug", tint: PulseColors.danger, title: "Developer") {
-            path.append(AppRoute.debug)
-        })
-        #endif
+        // Hidden until unlocked by tapping the version 7× in About (like Android's developer options).
+        if developerUnlocked {
+            rows.append(SettingsRowItem(icon: "ladybug", tint: PulseColors.danger, title: "Developer") {
+                path.append(AppRoute.debug)
+            })
+        }
         rows.append(SettingsRowItem(icon: "lock.shield", tint: PulseColors.success, title: "Privacy & Data") {
             path.append(AppRoute.settingsPrivacyData)
         })
