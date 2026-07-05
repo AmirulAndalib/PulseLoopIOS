@@ -11,10 +11,27 @@ import UIKit
 struct PairingView: View {
     @Environment(RingBLEClient.self) private var ble
 
+    private var forcePairingUIForTesting: Bool {
+        #if DEBUG
+        #if targetEnvironment(simulator)
+        UserDefaults.standard.bool(forKey: "forcePairingUI")
+        #else
+        false
+        #endif
+        #else
+        false
+        #endif
+    }
+
     /// Called once a ring is connected (onboarding finishes; Settings pops the route).
-    var onConnected: (() -> Void)? = nil
+    var onConnected: (() -> Void)?
     /// When set, shows a "Skip for now" action (onboarding only).
-    var onSkip: (() -> Void)? = nil
+    var onSkip: (() -> Void)?
+
+    init(onConnected: (() -> Void)? = nil, onSkip: (() -> Void)? = nil) {
+        self.onConnected = onConnected
+        self.onSkip = onSkip
+    }
 
     @State private var selectedIndex = 0
     @State private var selectedBrand = Self.allBrandsTab
@@ -65,7 +82,7 @@ struct PairingView: View {
                 .frame(maxWidth: .infinity) // full-width anchor: forces the column full so the button
                                             // never hugs to the (variable-width) dot row
 
-                if !ble.isBluetoothReady {
+                if !ble.isBluetoothReady && !forcePairingUIForTesting {
                     bluetoothOffCard
                 } else if ble.state == .connected {
                     connectedCard
@@ -74,7 +91,9 @@ struct PairingView: View {
                     actionArea
                 }
 
-                if let error = ble.lastError, ble.state != .connected {
+                if let error = ble.lastError,
+                   ble.state != .connected,
+                   !forcePairingUIForTesting {
                     Text(error)
                         .font(.caption)
                         .foregroundStyle(PulseColors.danger)
@@ -86,7 +105,13 @@ struct PairingView: View {
                 // scanning, bluetooth-off) so onboarding is never a dead end. Sits right under the
                 // Connect-ring button in the carousel state.
                 if let onSkip, ble.state != .connected {
-                    SecondaryButton(title: "Explore app", systemImage: "square.grid.2x2", action: onSkip)
+                    VStack(spacing: 8) {
+                        SecondaryButton(title: "Skip for now", systemImage: "arrow.right", action: onSkip)
+                        Text("You can pair a ring later from Settings.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(PulseColors.textMuted)
+                            .multilineTextAlignment(.center)
+                    }
                 }
             }
             .padding(24)
@@ -156,15 +181,15 @@ struct PairingView: View {
                             .animation(.spring(response: 0.3), value: selectedIndex)
                     }
                     .buttonStyle(.plain)
-                    .frame(minWidth: 24, minHeight: 24)
+                    .frame(minWidth: 44, minHeight: 44)
                     .contentShape(Rectangle())
                     .accessibilityLabel("Page \(index + 1) of \(models.count): \(model.displayName)")
                 }
             }
         }
         .frame(maxWidth: .infinity) // center dots; keep row from driving column width
-        .frame(height: 24) // reserve constant height so the Connect button never shifts between tabs
-        .padding(.top, 14)
+        .frame(height: 44) // reserve a constant 44pt tappable dot area across every brand tab
+        .padding(.top, 4)
         .padding(.bottom, 4)
     }
 

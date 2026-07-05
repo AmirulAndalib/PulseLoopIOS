@@ -16,11 +16,11 @@ struct CapabilityChips: View {
             ForEach(chips, id: \.self) { chip in
                 Text(chip)
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(PulseColors.textSecondary)
+                    .foregroundStyle(ChipTone.neutral.foreground)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                    .background(PulseColors.card, in: Capsule())
-                    .overlay(Capsule().strokeBorder(PulseColors.borderSubtle, lineWidth: 1))
+                    .background(ChipTone.neutral.background, in: Capsule())
+                    .overlay(Capsule().strokeBorder(ChipTone.neutral.border, lineWidth: 1))
             }
         }
         return ViewThatFits(in: .horizontal) {
