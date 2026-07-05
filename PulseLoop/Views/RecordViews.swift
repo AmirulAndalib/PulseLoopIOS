@@ -161,8 +161,12 @@ struct ActivityDetailView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
     @Query private var sessions: [ActivitySession]
+    @Query private var profiles: [UserProfile]
     let sessionId: UUID
     @State private var confirmingDelete = false
+    @State private var editing = false
+
+    private var units: UnitsPreference { profiles.first?.units ?? .metric }
 
     var body: some View {
         if let session = sessions.first(where: { $0.id == sessionId }) {
@@ -205,24 +209,172 @@ struct ActivityDetailView: View {
             .background(PulseColors.background)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
+                    Button { editing = true } label: {
+                        Image(systemName: "pencil")
+                    }
+                    .tint(PulseColors.accent)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
                     Button(role: .destructive) { confirmingDelete = true } label: {
                         Image(systemName: "trash")
                     }
                     .tint(PulseColors.danger)
                 }
             }
-            .confirmationDialog("Delete this workout?", isPresented: $confirmingDelete, titleVisibility: .visible) {
-                Button("Delete workout", role: .destructive) {
+            .sheet(isPresented: $editing) {
+                EditWorkoutSheet(session: session)
+            }
+            .sheet(isPresented: $confirmingDelete) {
+                WorkoutEndSheet(
+                    title: "Delete this workout?",
+                    message: "This permanently removes the workout and its recorded heart-rate, GPS, and sensor data. This can't be undone.",
+                    stats: deleteSheetStats(session),
+                    confirmTitle: "Delete workout",
+                    confirmIcon: "trash",
+                    destructive: true,
+                    cancelTitle: "Keep workout"
+                ) {
                     ActivityRecorderService.delete(session, context: modelContext)
                     dismiss()
                 }
-                Button("Cancel", role: .cancel) { }
-            } message: {
-                Text("This permanently removes the workout and its recorded heart-rate, GPS, and sensor data. This can't be undone.")
             }
         } else {
             EmptyStateView(title: "Workout not found", body: "This session is no longer in local storage.")
         }
+    }
+
+    /// Mini recap on the delete sheet — what the user is about to lose.
+    private func deleteSheetStats(_ session: ActivitySession) -> [(label: String, value: String)] {
+        let duration = session.endedAt.map { Int($0.timeIntervalSince(session.startedAt) - session.totalPauseSeconds) } ?? 0
+        var stats: [(label: String, value: String)] = [
+            (label: "Duration", value: ActivityMeta.duration(duration))
+        ]
+        if let meters = session.distanceMeters, meters > 0 {
+            let d = UnitsFormatter.distance(meters: meters, units: units)
+            stats.append((label: "Distance", value: "\(d.value) \(d.unit)"))
+        }
+        if let avg = session.avgHeartRate {
+            stats.append((label: "Avg HR", value: "\(Int(avg)) bpm"))
+        }
+        return stats
+    }
+}
+
+/// Limited post-finish editing: activity type and the start/end window. Everything derived —
+/// distance, calories, HR aggregates, the sample window, the daily rollup — is recomputed by
+/// `ActivityService.applyEdit`, which also pulls all-day ring data into an expanded window.
+private struct EditWorkoutSheet: View {
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
+    let session: ActivitySession
+    @State private var type: String
+    @State private var startedAt: Date
+    @State private var endedAt: Date
+
+    init(session: ActivitySession) {
+        self.session = session
+        _type = State(initialValue: ActivityMeta.meta(session.type).type)
+        _startedAt = State(initialValue: session.startedAt)
+        _endedAt = State(initialValue: session.endedAt ?? Date())
+    }
+
+    private var validationMessage: String? {
+        if endedAt > Date() { return "End time can't be in the future." }
+        if endedAt.timeIntervalSince(startedAt) <= session.totalPauseSeconds {
+            return session.totalPauseSeconds > 0
+                ? "The window must be longer than the \(max(1, Int(session.totalPauseSeconds / 60))) min of pauses in this workout."
+                : "End must be after the start."
+        }
+        return nil
+    }
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Text("Edit workout")
+                .font(.system(size: 20, weight: .bold))
+                .foregroundStyle(PulseColors.textPrimary)
+                .padding(.top, 8)
+
+            fieldRow("Activity") {
+                Picker("Activity type", selection: $type) {
+                    ForEach(ActivityMeta.allKinds) { kind in
+                        Label(kind.label, systemImage: kind.symbol).tag(kind.type)
+                    }
+                }
+                .pickerStyle(.menu)
+                .tint(PulseColors.accent)
+            }
+
+            fieldRow("Starts") {
+                DatePicker("", selection: $startedAt, in: ...Date(), displayedComponents: [.date, .hourAndMinute])
+                    .labelsHidden()
+                    .tint(PulseColors.accent)
+            }
+
+            fieldRow("Ends") {
+                DatePicker("", selection: $endedAt, in: ...Date(), displayedComponents: [.date, .hourAndMinute])
+                    .labelsHidden()
+                    .tint(PulseColors.accent)
+            }
+
+            if let validationMessage {
+                Text(validationMessage)
+                    .font(.system(size: 12))
+                    .foregroundStyle(PulseColors.warning)
+                    .multilineTextAlignment(.center)
+            } else {
+                Text("Distance, calories, and heart-rate stats are recalculated. Ring data recorded in the new window is pulled in automatically.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(PulseColors.textMuted)
+                    .multilineTextAlignment(.center)
+            }
+
+            Button {
+                if ActivityService.applyEdit(
+                    session: session, newType: type, newStartedAt: startedAt, newEndedAt: endedAt,
+                    context: modelContext
+                ) {
+                    dismiss()
+                }
+            } label: {
+                Label("Save changes", systemImage: "checkmark")
+                    .font(.system(size: 16, weight: .semibold))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 56)
+                    .foregroundStyle(.white)
+                    .background(validationMessage == nil ? PulseColors.accent : PulseColors.accent.opacity(0.4))
+                    .clipShape(Capsule())
+            }
+            .disabled(validationMessage != nil)
+
+            Button { dismiss() } label: {
+                Text("Cancel")
+                    .font(.system(size: 15, weight: .semibold))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 52)
+                    .foregroundStyle(PulseColors.textPrimary)
+                    .background(PulseColors.cardSoft)
+                    .clipShape(Capsule())
+                    .overlay(Capsule().stroke(PulseColors.borderSubtle, lineWidth: 1))
+            }
+        }
+        .padding(20)
+        .presentationDetents([.height(470)])
+        .presentationDragIndicator(.visible)
+        .presentationBackground(PulseColors.card)
+    }
+
+    private func fieldRow<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        HStack {
+            Text(title)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(PulseColors.textPrimary)
+            Spacer()
+            content()
+        }
+        .padding(.horizontal, 16).padding(.vertical, 8)
+        .background(PulseColors.cardSoft, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
     }
 }
 
@@ -618,6 +770,7 @@ private struct WorkoutEndSheet: View {
     let confirmTitle: String
     let confirmIcon: String
     var destructive: Bool = false
+    var cancelTitle: String = "Keep recording"
     let onConfirm: () -> Void
 
     var body: some View {
@@ -666,7 +819,7 @@ private struct WorkoutEndSheet: View {
             }
 
             Button { dismiss() } label: {
-                Text("Keep recording")
+                Text(cancelTitle)
                     .font(.system(size: 15, weight: .semibold))
                     .frame(maxWidth: .infinity)
                     .frame(height: 52)

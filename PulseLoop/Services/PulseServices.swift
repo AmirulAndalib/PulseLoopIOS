@@ -866,6 +866,75 @@ enum ActivityService {
         )
     }
 
+    /// Post-finish edit, deliberately limited to type + time window. Brings every derived value
+    /// back in line: the daily rollup moves (old day debited, new day credited), samples outside
+    /// the new window are pruned, and aggregates/calories/distance recompute for the new
+    /// type/window — `backfillSamples` inside `refreshSummary` pulls all-day ring data into an
+    /// expanded window. Returns false (no mutation) when the edit is invalid.
+    @discardableResult
+    static func applyEdit(
+        session: ActivitySession,
+        newType: String,
+        newStartedAt: Date,
+        newEndedAt: Date,
+        context: ModelContext
+    ) -> Bool {
+        guard session.status == .finished,
+              newEndedAt <= Date(),
+              newEndedAt.timeIntervalSince(newStartedAt) > session.totalPauseSeconds
+        else { return false }
+
+        let payload = editPayload(from: session, newType: newType, newStart: newStartedAt, newEnd: newEndedAt)
+        reverseDailyRollup(for: session, context: context)
+
+        session.type = newType
+        session.startedAt = newStartedAt
+        session.endedAt = newEndedAt
+        context.insert(ActivityEvent(sessionId: session.id, kind: "edited", payloadJSON: payload))
+
+        // Prune samples that fell outside the new window; backfill re-links them from the
+        // Measurement store if the window re-expands later. Save before recomputing — the
+        // refresh refetches samples, and pending deletes aren't reliably reflected (same
+        // SwiftData quirk `applyActivityBucket` works around for inserts).
+        for sample in ActivityRepository.samples(sessionId: session.id, context: context)
+        where sample.timestamp < newStartedAt || sample.timestamp > newEndedAt {
+            context.delete(sample)
+        }
+        try? context.save()
+
+        let summary = refreshSummary(for: session, context: context)
+        creditDailyRollup(for: session, durationSeconds: summary.durationSeconds ?? 0, context: context)
+        try? context.save()
+        return true
+    }
+
+    /// Reverse a finished session's contribution to its day's rollup — used before an edit moves
+    /// the window and by `ActivityRecorderService.delete`.
+    static func reverseDailyRollup(for session: ActivitySession, context: ModelContext) {
+        guard let ended = session.endedAt else { return }
+        let minutes = max(0, Int(ended.timeIntervalSince(session.startedAt) - session.totalPauseSeconds)) / 60
+        guard minutes > 0, let row = MetricsRepository.activity(on: session.startedAt, context: context) else { return }
+        row.activeMinutes = max(0, row.activeMinutes - minutes)
+        if session.useGps, let dist = session.distanceMeters {
+            row.distanceMeters = max(0, row.distanceMeters - dist)
+        }
+        row.updatedAt = Date()
+    }
+
+    private static func editPayload(from session: ActivitySession, newType: String, newStart: Date, newEnd: Date) -> String {
+        let f = ISO8601DateFormatter()
+        var dict: [String: String] = [
+            "old_type": session.type,
+            "new_type": newType,
+            "old_start": f.string(from: session.startedAt),
+            "new_start": f.string(from: newStart),
+            "new_end": f.string(from: newEnd)
+        ]
+        if let oldEnd = session.endedAt { dict["old_end"] = f.string(from: oldEnd) }
+        let data = (try? JSONSerialization.data(withJSONObject: dict, options: [.sortedKeys])) ?? Data()
+        return String(data: data, encoding: .utf8) ?? "{}"
+    }
+
     /// Credit the workout's minutes/distance to the day's rollup — called exactly once, at finish
     /// (a summary *refresh* must never double-count; deletion reverses this in `delete`).
     private static func creditDailyRollup(for session: ActivitySession, durationSeconds: Int, context: ModelContext) {
@@ -949,7 +1018,11 @@ enum ActivityService {
     }
     
     private static func gpsDistance(session: ActivitySession, context: ModelContext) -> Double? {
-        let points = ActivityRepository.gpsPoints(sessionId: session.id, context: context).filter { $0.accepted }
+        // Window to [startedAt, endedAt] so a post-finish time edit excludes out-of-window route
+        // segments (inert for unedited sessions — every point lies inside the recorded span).
+        let windowEnd = session.endedAt ?? Date()
+        let points = ActivityRepository.gpsPoints(sessionId: session.id, context: context)
+            .filter { $0.accepted && $0.timestamp >= session.startedAt && $0.timestamp <= windowEnd }
         guard points.count >= 2 else { return nil }
         return RouteDistanceEngine.distanceMeters(points, profile: .profile(for: session.type))
     }
@@ -1011,16 +1084,7 @@ enum ActivityRecorderService {
     /// day's activity rollup so the totals stay honest.
     @MainActor
     static func delete(_ session: ActivitySession, context: ModelContext) {
-        if let ended = session.endedAt {
-            let minutes = max(0, Int(ended.timeIntervalSince(session.startedAt) - session.totalPauseSeconds)) / 60
-            if minutes > 0, let row = MetricsRepository.activity(on: session.startedAt, context: context) {
-                row.activeMinutes = max(0, row.activeMinutes - minutes)
-                if session.useGps, let dist = session.distanceMeters {
-                    row.distanceMeters = max(0, row.distanceMeters - dist)
-                }
-                row.updatedAt = Date()
-            }
-        }
+        ActivityService.reverseDailyRollup(for: session, context: context)
 
         let id = session.id
         ActivityRepository.samples(sessionId: id, context: context).forEach(context.delete)

@@ -18,10 +18,16 @@ struct WorkoutMetricsSections: View {
     private var units: UnitsPreference { profiles.first?.units ?? .metric }
 
     var body: some View {
+        // Window everything to [startedAt, endedAt] so a post-finish time edit excludes
+        // out-of-window data from the map, splits, and charts (inert for unedited sessions).
+        let windowEnd = session.endedAt ?? Date()
         let points = ActivityRepository.gpsPoints(sessionId: session.id, context: modelContext)
+            .filter { $0.timestamp >= session.startedAt && $0.timestamp <= windowEnd }
         let accepted = points.filter { $0.accepted }.sorted { $0.timestamp < $1.timestamp }
         let hr = sessionHRSamples(session.id, context: modelContext)
+            .filter { $0.timestamp >= session.startedAt && $0.timestamp <= windowEnd }
         let spo2 = sessionSpO2Samples(session.id, context: modelContext)
+            .filter { $0.timestamp >= session.startedAt && $0.timestamp <= windowEnd }
         let duration = session.endedAt.map { Int($0.timeIntervalSince(session.startedAt) - session.totalPauseSeconds) }
         let elevation = session.useGps ? routeElevation(accepted) : nil
         let altitudes = accepted.compactMap(\.altitude)
@@ -33,9 +39,13 @@ struct WorkoutMetricsSections: View {
 
             statsGrid(elevationGain: elevation?.gain)
 
-            if session.useGps {
-                WorkoutMapView(points: accepted)
-                SplitsTable(points: accepted, units: units, activityType: session.type)
+            // GPS-capable types always get the map slot — a session edited from an indoor type
+            // shows the honest "GPS route unavailable" placeholder instead of pretending.
+            if ActivityMeta.meta(session.type).gpsCapable {
+                WorkoutMapView(points: accepted, unavailable: !session.useGps || accepted.count < 2)
+                if session.useGps, ActivityMetricSet.set(for: session.type).showsSplits {
+                    SplitsTable(points: accepted, units: units, activityType: session.type)
+                }
             }
 
             if hr.count > 1 {
@@ -164,18 +174,25 @@ struct WorkoutMetricsSections: View {
         // The hero band already shows the headline metrics (GPS: distance/duration/pace,
         // indoor: duration/active-min/calories), so the grid fills in the rest without repeating.
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 3), spacing: 12) {
-            if session.useGps {
+            if session.showsGpsHeadline {
                 WorkoutStat(label: "Calories", value: session.calories.map { "\(Int($0))" } ?? "—")
             }
             WorkoutStat(label: "Avg HR", value: session.avgHeartRate.map { "\(Int($0))" } ?? "—")
             WorkoutStat(label: "Max HR", value: session.maxHeartRate.map { "\(Int($0))" } ?? "—")
             WorkoutStat(label: "Min HR", value: session.minHeartRate.map { "\(Int($0))" } ?? "—")
             WorkoutStat(label: "SpO₂", value: session.latestSpO2.map { "\(Int($0))%" } ?? "—")
-            if session.useGps, ActivityMetricSet.set(for: session.type).showsElevation, let elevationGain {
+            if session.showsGpsHeadline, ActivityMetricSet.set(for: session.type).showsElevation, let elevationGain {
                 WorkoutStat(label: "Elev gain", value: String(format: "%.0f m", elevationGain))
             }
         }
     }
+}
+
+private extension ActivitySession {
+    /// GPS-style headline metrics (distance/pace hero, calories in the grid) only when a route was
+    /// actually recorded AND the — possibly edited — type is GPS-capable. A gym session edited to
+    /// "run" keeps the indoor headline: it has no route, and faking one would lie.
+    var showsGpsHeadline: Bool { useGps && ActivityMeta.meta(type).gpsCapable }
 }
 
 /// Three large headline stats in one card. Adapts to whether the workout used GPS:
@@ -189,7 +206,7 @@ private struct SummaryHeroBand: View {
 
     private var metrics: [Metric] {
         let dur = durationSeconds.map { ActivityMeta.duration($0) } ?? "—"
-        if session.useGps {
+        if session.showsGpsHeadline {
             let d = session.distanceMeters.map { UnitsFormatter.distance(meters: $0, units: units) }
             return [
                 Metric(value: d?.value ?? "—", label: (d?.unit ?? "km").uppercased(), tint: PulseColors.distance),
