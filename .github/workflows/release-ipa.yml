@@ -39,14 +39,15 @@ jobs:
       # manual `workflow_dispatch` run we must use the supplied tag or we'd
       # build main HEAD instead of the released source.
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
 
-      - name: Select Xcode 16.4
+      - name: Select Xcode 26.3
         uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
         with:
-          xcode-version: '16.4'
+          # Matches the toolchain used by the passing CI build.
+          xcode-version: '26.3'
 
       - name: Show toolchain
         run: xcodebuild -version
