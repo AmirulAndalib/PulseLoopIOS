@@ -180,6 +180,8 @@ final class EventPersistenceSubscriber {
         PulseDataChange.shared.notify()
     }
 
+    // This is an exhaustive event router; each enum case is independent rather than branching logic.
+    // swiftlint:disable:next cyclomatic_complexity
     private func applyPersist(_ event: PulseEvent) {
         switch event {
         case let .deviceStateChanged(state, address):
