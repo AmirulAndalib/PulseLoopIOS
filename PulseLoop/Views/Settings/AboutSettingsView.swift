@@ -20,12 +20,10 @@ struct AboutSettingsView: View {
         return Double(min(versionTapCount, developerTapThreshold - 1)) / Double(developerTapThreshold - 1)
     }
 
-    private let repoURL = URL(string: "https://github.com/sakshambhutani/PulseLoop")!
+    private let repoURL = URL(string: "https://github.com/saksham2001/PulseLoopiOS")!
 
     private var appVersionLabel: String {
-        let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
-        let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
-        return "\(v) (\(b))"
+        "v1.0.0-beta.2"
     }
 
     var body: some View {
@@ -72,7 +70,7 @@ struct AboutSettingsView: View {
                 linkCard(
                     icon: "chevron.left.forwardslash.chevron.right",
                     title: "Source on GitHub",
-                    subtitle: "github.com/sakshambhutani/PulseLoop",
+                    subtitle: "github.com/saksham2001/PulseLoopiOS",
                     url: repoURL
                 )
                 StatusCopy(

@@ -17,14 +17,24 @@ struct SettingsView: View {
         MetricsService.activeCapabilities(context: modelContext, ble: ble)
     }
 
-    /// Friendly tier name for the AI Coach row, not the raw model id.
+    /// Provider-aware AI Coach summary. Local modes identify where inference runs; hosted
+    /// providers show the selected model so stale settings cannot mislabel them as "Balanced".
     private var coachTrailing: String {
         guard coachStore.settings.coachMasterEnabled else { return "Off" }
-        switch CoachModel(rawValue: coachStore.settings.model) {
-        case .gpt54mini: return "Fast"
-        case .gpt54: return "Balanced"
-        case .gpt55: return "Pro"
-        case nil: return "On"
+        let settings = coachStore.settings
+        switch settings.providerMode {
+        case .offlineStub:
+            return "Offline"
+        case .appleOnDevice:
+            return "Apple on-device"
+        case .userOpenAIKey:
+            return CoachModel(rawValue: settings.model)?.label ?? settings.model
+        case .userGeminiKey:
+            return GeminiModel(rawValue: settings.model)?.label ?? settings.model
+        case .userOpenRouterKey:
+            return OpenRouterModel(rawValue: settings.model)?.label ?? settings.openRouterModel
+        case .backendProxy:
+            return "Backend proxy"
         }
     }
 

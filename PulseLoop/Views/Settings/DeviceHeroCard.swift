@@ -100,22 +100,27 @@ struct DeviceHeroCard: View {
         // One SwiftData read for the stored device, reused for name, battery, and art.
         let device = DeviceRepository.current(context: modelContext)
         let deviceType = ble.activeDeviceType ?? device?.deviceType
+        let wearableModel = ble.activeWearableModel ?? WearableModel.model(id: device?.wearableModelID)
         let battery = ble.batteryPercent ?? device?.batteryPercent
         let status = DeviceHeroStatus.make(
             state: ble.state,
-            connectedName: ble.state == .connected ? ble.activeDeviceType?.displayName : nil,
-            knownName: deviceType?.displayName,
+            connectedName: ble.state == .connected ? wearableModel?.displayName ?? ble.activeDeviceType?.displayName : nil,
+            knownName: wearableModel?.displayName ?? deviceType?.displayName,
             batteryPercent: battery,
             lastSync: coordinator.lastSyncAt,
             now: Date()
         )
 
-        // Three peer buttons (no nesting): the card body + the chevron navigate to Wearable settings;
-        // the action button connects/disconnects. Peers, not nested, so a tap never double-fires.
-        HStack(spacing: 12) {
+        // The connected card is purely informational and opens Wearable settings, where Disconnect
+        // lives. Setup/reconnect remain available here only when the ring is not connected.
+        VStack(spacing: 10) {
             Button { path.append(AppRoute.settingsWearable) } label: {
-                HStack(spacing: 16) {
-                    RingArtView(tint: PulseColors.info, size: 72, imageName: ringImageName(for: deviceType))
+                HStack(alignment: .top, spacing: 16) {
+                    RingArtView(
+                        tint: PulseColors.info,
+                        size: 72,
+                        imageName: wearableModel?.imageName ?? ringImageName(for: deviceType)
+                    )
                         .accessibilityHidden(true)
 
                     VStack(alignment: .leading, spacing: 5) {
@@ -130,21 +135,37 @@ struct DeviceHeroCard: View {
                             .foregroundStyle(status.statusTint)
                             .lineLimit(1)
 
-                        if let battery {
-                            Text("Battery: \(max(0, min(100, battery)))%")
-                                .font(.system(size: 13))
-                                .foregroundStyle(PulseColors.textSecondary)
-                                .lineLimit(1)
-                        }
-
                         if let syncText = status.syncText {
                             Text(syncText)
                                 .font(.system(size: 12))
                                 .foregroundStyle(PulseColors.textSecondary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
                         }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .layoutPriority(1)
 
-                    Spacer(minLength: 8)
+                    VStack(alignment: .trailing, spacing: 14) {
+                        if let batteryText = status.batteryText {
+                            HStack(spacing: 4) {
+                                Image(systemName: "battery.100")
+                                Text(batteryText)
+                            }
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(PulseColors.success)
+                                .padding(.horizontal, 9)
+                                .padding(.vertical, 6)
+                                .background(PulseColors.success.opacity(0.12), in: Capsule())
+                                .fixedSize()
+                        }
+
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(PulseColors.textMuted)
+                            .frame(width: 20, height: 20)
+                    }
+                    .fixedSize(horizontal: true, vertical: true)
                 }
                 .contentShape(Rectangle())
             }
@@ -153,29 +174,28 @@ struct DeviceHeroCard: View {
             .accessibilityLabel(cardAccessibilityLabel(status))
             .accessibilityHint("Opens ring settings")
 
-            Button(action: { performAction(status.action) }) {
-                Text(status.actionTitle)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(status.actionEnabled ? PulseColors.accent : PulseColors.textMuted)
-                    .padding(.vertical, 13) // 44pt min touch target
-                    .contentShape(Rectangle())
+            if status.action != .disconnect {
+                Button(action: { performAction(status.action) }) {
+                    Text(status.actionTitle)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(status.actionEnabled ? PulseColors.accent : PulseColors.textMuted)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(
+                            status.actionEnabled ? PulseColors.accent.opacity(0.12) : PulseColors.elevated,
+                            in: Capsule()
+                        )
+                }
+                .buttonStyle(.plain)
+                .disabled(!status.actionEnabled)
+                .accessibilityLabel(status.actionTitle)
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+                .frame(maxWidth: .infinity, alignment: .trailing)
             }
-            .buttonStyle(.plain)
-            .disabled(!status.actionEnabled)
-            .accessibilityLabel(status.actionTitle)
-
-            Button { path.append(AppRoute.settingsWearable) } label: {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(PulseColors.textMuted)
-                    .frame(width: 20, height: 44)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityHidden(true) // decorative; the card body already provides this navigation
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(20)
+        .padding(18)
         .background(PulseColors.card)
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
@@ -201,7 +221,7 @@ struct DeviceHeroCard: View {
     private func ringImageName(for type: RingDeviceType?) -> String? {
         switch type {
         case .jring: return "jring"
-        case .colmiR02: return "colmi-r02"
+        case .colmiR02: return nil
         case nil: return nil
         }
     }
