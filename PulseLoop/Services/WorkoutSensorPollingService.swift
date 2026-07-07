@@ -46,9 +46,19 @@ final class WorkoutSensorPollingService: ObservableObject {
     /// stalled and gets restarted.
     private let streamStallSeconds: TimeInterval = 45
 
+    /// Consecutive stream-health checks that found the live stream dead. After `maxStreamStalls`
+    /// restart attempts the stream is considered unusable and HR degrades to spot polling (the
+    /// hardware-verified manual-measure path), so a broken realtime protocol can't leave the whole
+    /// workout without HR.
+    private var consecutiveStreamStalls = 0
+    private let maxStreamStalls = 3
+
     /// Fired after each real read attempt on a connected ring (success or failure). Lets the
     /// orchestrator refresh the Live Activity so background HR/SpO₂ reach the Lock Screen.
     var onPollCompleted: (() -> Void)?
+    /// Fired when the HR stream is abandoned mid-workout and the plan degrades to spot polling,
+    /// so the orchestrator can keep `activePlan` (and the tile subtitles) honest.
+    var onPlanDegraded: ((WorkoutVitalsPlan) -> Void)?
 
     init(coordinator: RingSyncCoordinator, context: ModelContext) {
         self.coordinator = coordinator
@@ -90,9 +100,8 @@ final class WorkoutSensorPollingService: ObservableObject {
         guard let activeSession, activeSession.status == .recording else { return }
         self.plan = plan
 
-        let samples = ActivityRepository.samples(sessionId: activeSession.id, context: context)
-        let latestHR = samples.last { $0.kind == "hr" }?.timestamp
-        let latestSpO2 = samples.last { $0.kind == "spo2" }?.timestamp
+        let latestHR = ActivityRepository.latestSample(sessionId: activeSession.id, kind: "hr", context: context)?.timestamp
+        let latestSpO2 = ActivityRepository.latestSample(sessionId: activeSession.id, kind: "spo2", context: context)?.timestamp
         let now = Date()
 
         if let latestHR, now.timeIntervalSince(latestHR) < 90 {
@@ -169,19 +178,46 @@ final class WorkoutSensorPollingService: ObservableObject {
         guard let sessionID,
               let session = ActivityRepository.sessions(context: context).first(where: { $0.id == sessionID }),
               session.status == .recording else { return }
-        let latest = ActivityRepository.samples(sessionId: sessionID, context: context)
-            .last { $0.kind == MeasurementKind.heartRate.rawValue }?.timestamp
-        if let latest, latest > (session.lastSensorPollAt ?? .distantPast) {
-            session.lastSensorPollAt = latest
+        let hrKind = MeasurementKind.heartRate.rawValue
+        // Recovery freshness counts any HR sample (ring-log backfill included) …
+        let latestAny = ActivityRepository.latestSample(sessionId: sessionID, kind: hrKind, context: context)?.timestamp
+        if let latestAny, latestAny > (session.lastSensorPollAt ?? .distantPast) {
+            session.lastSensorPollAt = latestAny
             try? context.save()
         }
         guard coordinator.isConnected else { return }
-        let age = Date().timeIntervalSince(latest ?? session.startedAt)
+        // … but stall detection must only trust LIVE samples: the ring's 5-min log backfill would
+        // otherwise keep a dead stream looking healthy forever.
+        let latestLive = ActivityRepository.latestSample(
+            sessionId: sessionID, kind: hrKind, source: MeasurementSource.live.rawValue, context: context
+        )?.timestamp
+        let age = Date().timeIntervalSince(latestLive ?? session.startedAt)
         if age > streamStallSeconds {
-            record(kind: "hr_stream", status: "stalled", errorMessage: "no sample in \(Int(age))s")
-            coordinator.restartWorkoutHeartRateIfActive()
+            consecutiveStreamStalls += 1
+            record(kind: "hr_stream", status: "stalled",
+                   errorMessage: "no live sample in \(Int(age))s (stall \(consecutiveStreamStalls)/\(maxStreamStalls))")
+            if consecutiveStreamStalls >= maxStreamStalls {
+                degradeToSpotPolling()
+            } else {
+                coordinator.restartWorkoutHeartRateIfActive()
+            }
+        } else {
+            consecutiveStreamStalls = 0
         }
         onPollCompleted?()
+    }
+
+    /// The stream stayed dead through several restarts — abandon it and fall back to the
+    /// deterministic spot-poll reads (manual measurement, verified on hardware) for the rest of
+    /// the workout. Recorded as a quality event so the summary can explain the cadence change.
+    private func degradeToSpotPolling() {
+        coordinator.stopWorkoutHeartRate()
+        plan.hrMode = .spotPoll
+        consecutiveStreamStalls = 0
+        nextHRPoll = .now
+        record(kind: "hr_stream", status: "fallback_spot",
+               errorMessage: "stream dead after \(maxStreamStalls) restarts — switching to spot reads")
+        onPlanDegraded?(plan)
     }
 
     // MARK: - Polling

@@ -101,4 +101,77 @@ final class RouteDistanceEngineTests: XCTestCase {
         XCTAssertEqual(ActivityTrackingProfile.profile(for: "cycling").maxSpeedMps, 25, "legacy alias resolves to cycle")
         XCTAssertNotEqual(ActivityTrackingProfile.profile(for: "cycle"), ActivityTrackingProfile.profile(for: "run"))
     }
+
+    // MARK: - Incremental accumulator (live screen) must match the batch engine exactly
+
+    /// Feed points one-by-one and assert distance + splits equal the batch computation.
+    private func assertAccumulatorMatchesBatch(_ points: [ActivityGpsPoint], profile: ActivityTrackingProfile,
+                                               splitMeters: Double = 1000, file: StaticString = #filePath, line: UInt = #line) {
+        var acc = RouteDistanceEngine.Accumulator(profile: profile, splitMeters: splitMeters)
+        for p in points.filter(\.accepted).sorted(by: { $0.timestamp < $1.timestamp }) {
+            acc.add(latitude: p.latitude, longitude: p.longitude, timestamp: p.timestamp)
+        }
+        let batchDistance = RouteDistanceEngine.distanceMeters(points, profile: profile)
+        let batchSplits = RouteDistanceEngine.splits(points, splitMeters: splitMeters, profile: profile)
+        XCTAssertEqual(acc.distanceMeters, batchDistance, accuracy: 0.001, file: file, line: line)
+        XCTAssertEqual(acc.splits.completedSeconds.count, batchSplits.completedSeconds.count, file: file, line: line)
+        for (a, b) in zip(acc.splits.completedSeconds, batchSplits.completedSeconds) {
+            XCTAssertEqual(a, b, accuracy: 0.001, file: file, line: line)
+        }
+        XCTAssertEqual(acc.splits.partialMeters, batchSplits.partialMeters, accuracy: 0.001, file: file, line: line)
+        XCTAssertEqual(acc.splits.partialSeconds, batchSplits.partialSeconds, accuracy: 0.001, file: file, line: line)
+    }
+
+    func testAccumulatorMatchesBatchStraightRoute() {
+        assertAccumulatorMatchesBatch(track(count: 250, stepMeters: 10, stepSeconds: 5), profile: .profile(for: "walk"))
+    }
+
+    func testAccumulatorMatchesBatchAcrossGap() {
+        let leg1 = track(count: 105, stepMeters: 10, stepSeconds: 5)
+        let resumeAt = leg1.last!.timestamp.addingTimeInterval(300)
+        let leg2 = track(count: 105, stepMeters: 10, stepSeconds: 5, from: (37.0 + 1040 * degPerMeter, -122.0), startAt: resumeAt)
+        assertAccumulatorMatchesBatch(leg1 + leg2, profile: .profile(for: "walk"))
+    }
+
+    func testAccumulatorMatchesBatchWithSpeedSpike() {
+        var points = track(count: 21, stepMeters: 10, stepSeconds: 5)
+        let last = points.last!
+        points.append(ActivityGpsPoint(
+            sessionId: sessionId,
+            latitude: last.latitude + 300 * degPerMeter,
+            longitude: last.longitude,
+            timestamp: last.timestamp.addingTimeInterval(2)
+        ))
+        points.append(ActivityGpsPoint(
+            sessionId: sessionId,
+            latitude: last.latitude + 10 * degPerMeter,
+            longitude: last.longitude,
+            timestamp: last.timestamp.addingTimeInterval(7)
+        ))
+        assertAccumulatorMatchesBatch(points, profile: .profile(for: "walk"))
+    }
+
+    func testAccumulatorSkipsOutOfOrderFix() {
+        let points = track(count: 20, stepMeters: 10, stepSeconds: 5)
+        var acc = RouteDistanceEngine.Accumulator(profile: .profile(for: "walk"), splitMeters: 1000)
+        for p in points {
+            acc.add(latitude: p.latitude, longitude: p.longitude, timestamp: p.timestamp)
+        }
+        let before = acc.distanceMeters
+        // A stale fix older than the last one must be ignored, not subtract/teleport.
+        acc.add(latitude: 37.0, longitude: -122.0, timestamp: start.addingTimeInterval(-10))
+        XCTAssertEqual(acc.distanceMeters, before, accuracy: 0.001)
+    }
+
+    func testAccumulatorSeedMatchesIncrementalFeed() {
+        let points = track(count: 100, stepMeters: 10, stepSeconds: 5)
+        var incremental = RouteDistanceEngine.Accumulator(profile: .profile(for: "run"), splitMeters: 1000)
+        for p in points {
+            incremental.add(latitude: p.latitude, longitude: p.longitude, timestamp: p.timestamp)
+        }
+        var seeded = RouteDistanceEngine.Accumulator(profile: .profile(for: "run"), splitMeters: 1000)
+        seeded.seed(points.shuffled())   // seed sorts + filters internally
+        XCTAssertEqual(seeded.distanceMeters, incremental.distanceMeters, accuracy: 0.001)
+        XCTAssertEqual(seeded.splits.completedSeconds, incremental.splits.completedSeconds)
+    }
 }

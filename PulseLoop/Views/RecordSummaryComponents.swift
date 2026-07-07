@@ -3,6 +3,36 @@ import SwiftData
 
 // MARK: - Summary components
 
+/// Everything `WorkoutMetricsSections` derives from the store, computed once per data change
+/// (see `refreshKey`) instead of on every render — the fetches + O(n) walks here made the summary
+/// and edit screens crawl when they ran per body evaluation.
+struct WorkoutSummaryData {
+    var accepted: [ActivityGpsPoint] = []
+    var hr: [MetricSample] = []
+    var spo2: [MetricSample] = []
+    var durationSeconds: Int?
+    var elevation: (gain: Double, loss: Double)?
+    var altitudes: [Double] = []
+
+    /// Window everything to [startedAt, endedAt] so a post-finish time edit excludes
+    /// out-of-window data from the map, splits, and charts (inert for unedited sessions).
+    @MainActor
+    static func build(session: ActivitySession, context: ModelContext) -> WorkoutSummaryData {
+        var data = WorkoutSummaryData()
+        let windowEnd = session.endedAt ?? Date()
+        data.accepted = ActivityRepository.gpsPoints(sessionId: session.id, context: context)
+            .filter { $0.accepted && $0.timestamp >= session.startedAt && $0.timestamp <= windowEnd }
+        data.hr = sessionHRSamples(session.id, context: context)
+            .filter { $0.timestamp >= session.startedAt && $0.timestamp <= windowEnd }
+        data.spo2 = sessionSpO2Samples(session.id, context: context)
+            .filter { $0.timestamp >= session.startedAt && $0.timestamp <= windowEnd }
+        data.durationSeconds = session.endedAt.map { Int($0.timeIntervalSince(session.startedAt) - session.totalPauseSeconds) }
+        data.elevation = session.useGps ? routeElevation(data.accepted) : nil
+        data.altitudes = data.accepted.compactMap(\.altitude)
+        return data
+    }
+}
+
 /// The full rich body of a finished workout — header, hero band, stat grid, map, splits, HR chart
 /// + zones, SpO₂ chart, elevation profile, and the recording-quality card. Shared by the
 /// post-record summary (`RecordSummaryView`) and the activity detail screen (`ActivityDetailView`)
@@ -15,22 +45,31 @@ struct WorkoutMetricsSections: View {
     /// Shows the "WORKOUT SAVED" badge in the header (only meaningful right after recording).
     var savedBadge: Bool = false
 
+    /// Memoized derived data; rebuilt only when `refreshKey` changes (summary refresh / backfill).
+    @State private var cachedData: WorkoutSummaryData?
+
     private var units: UnitsPreference { profiles.first?.units ?? .metric }
 
+    /// Changes when the summary recomputes (`updatedAt`) or late backfill links new samples
+    /// (cheap COUNT probe — no row materialization).
+    private var refreshKey: String {
+        let sessionId = session.id
+        let sampleCount = (try? modelContext.fetchCount(
+            FetchDescriptor<ActivitySample>(predicate: #Predicate { $0.sessionId == sessionId })
+        )) ?? 0
+        return "\(session.updatedAt.timeIntervalSince1970)-\(sampleCount)"
+    }
+
     var body: some View {
-        // Window everything to [startedAt, endedAt] so a post-finish time edit excludes
-        // out-of-window data from the map, splits, and charts (inert for unedited sessions).
-        let windowEnd = session.endedAt ?? Date()
-        let points = ActivityRepository.gpsPoints(sessionId: session.id, context: modelContext)
-            .filter { $0.timestamp >= session.startedAt && $0.timestamp <= windowEnd }
-        let accepted = points.filter { $0.accepted }.sorted { $0.timestamp < $1.timestamp }
-        let hr = sessionHRSamples(session.id, context: modelContext)
-            .filter { $0.timestamp >= session.startedAt && $0.timestamp <= windowEnd }
-        let spo2 = sessionSpO2Samples(session.id, context: modelContext)
-            .filter { $0.timestamp >= session.startedAt && $0.timestamp <= windowEnd }
-        let duration = session.endedAt.map { Int($0.timeIntervalSince(session.startedAt) - session.totalPauseSeconds) }
-        let elevation = session.useGps ? routeElevation(accepted) : nil
-        let altitudes = accepted.compactMap(\.altitude)
+        // First render computes inline (no blank frame); after that the cache serves every render
+        // until refreshKey invalidates it.
+        let data = cachedData ?? WorkoutSummaryData.build(session: session, context: modelContext)
+        let accepted = data.accepted
+        let hr = data.hr
+        let spo2 = data.spo2
+        let duration = data.durationSeconds
+        let elevation = data.elevation
+        let altitudes = data.altitudes
 
         VStack(spacing: 16) {
             header
@@ -88,6 +127,9 @@ struct WorkoutMetricsSections: View {
             }
 
             RecordingQualityCard(session: session)
+        }
+        .task(id: refreshKey) {
+            cachedData = WorkoutSummaryData.build(session: session, context: modelContext)
         }
     }
 
