@@ -107,6 +107,12 @@ final class TK5DecoderTests: XCTestCase {
         }
         XCTAssertEqual(bp.map(\.0), [115, 112, 112, 109, 111, 111, 110, 106])   // systolic
         XCTAssertEqual(bp.last?.1, 70)                                          // 06:00 diastolic
+        // Cumulative per-day steps emitted as activityUpdate (max per day); this frame's first record
+        // carries the 23:00 daily total of 3336.
+        let steps = events.compactMap { e -> Int? in
+            if case let .activityUpdate(_, s, _, _) = e { return s } else { return nil }
+        }
+        XCTAssertEqual(steps.max(), 3336)
     }
 
     func testLiveExtendedDisambiguatesBPvsHRV() {

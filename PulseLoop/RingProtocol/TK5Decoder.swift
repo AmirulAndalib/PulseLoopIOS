@@ -79,6 +79,12 @@ struct TK5Decoder {
             var events: [RingDecodedEvent] = []
             for r in records(in: frame.payload, size: 20) {
                 let ts = TK5Bytes.date(TK5Bytes.u32(r, 0))
+                // Steps @4/5 are a *cumulative* per-day counter (rises through the day, resets to 0 at
+                // midnight). Emit as an `activityUpdate` (per-day max) — not an additive bucket — so
+                // each day's row (incl. today's) tracks the ring's running total and resets daily.
+                // distance/calories are 0 here (max() leaves any live-status values intact).
+                events.append(.activityUpdate(timestamp: ts, steps: TK5Bytes.u16(r, 4),
+                                              distanceMeters: 0, calories: 0))
                 if (60...250).contains(r[7]), (30...160).contains(r[8]) {
                     // Systolic @7 / diastolic @8 — verified against the app (106/70 @6:00).
                     events.append(.bloodPressureSample(systolic: Int(r[7]), diastolic: Int(r[8]), timestamp: ts))
