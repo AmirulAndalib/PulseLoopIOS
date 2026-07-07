@@ -80,6 +80,57 @@ enum RouteDistanceEngine {
         splits(points, splitMeters: splitMeters, profile: profile).completedSeconds
     }
 
+    /// Incremental counterpart of `distanceMeters` + `splits` for the live screen: O(1) per GPS fix
+    /// instead of re-walking the whole route every render. Applies the exact same gap/speed segment
+    /// rules, so live totals always match the batch recompute at finish. Points must arrive in
+    /// timestamp order (CoreLocation guarantees this); a stale out-of-order fix is skipped.
+    struct Accumulator {
+        let profile: ActivityTrackingProfile
+        let splitMeters: Double
+        private(set) var distanceMeters: Double = 0
+        private(set) var splits = Splits()
+        private var last: (lat: Double, lon: Double, ts: Date)?
+
+        init(profile: ActivityTrackingProfile, splitMeters: Double) {
+            self.profile = profile
+            self.splitMeters = splitMeters
+        }
+
+        mutating func add(latitude: Double, longitude: Double, timestamp: Date) {
+            guard let previous = last else {
+                last = (latitude, longitude, timestamp)
+                return
+            }
+            guard timestamp >= previous.ts else { return }   // out-of-order fix — skip
+            if let meters = RouteDistanceEngine.segmentMeters(
+                lat1: previous.lat, lon1: previous.lon, t1: previous.ts,
+                lat2: latitude, lon2: longitude, t2: timestamp,
+                profile: profile
+            ) {
+                distanceMeters += meters
+                if splitMeters > 0 {
+                    splits.partialMeters += meters
+                    splits.partialSeconds += timestamp.timeIntervalSince(previous.ts)
+                    while splits.partialMeters >= splitMeters {
+                        // Same crossing rule as the batch `splits`: the crossing segment's full time
+                        // credits the completed split; leftover distance rolls forward.
+                        splits.completedSeconds.append(splits.partialSeconds)
+                        splits.partialMeters -= splitMeters
+                        splits.partialSeconds = 0
+                    }
+                }
+            }
+            last = (latitude, longitude, timestamp)
+        }
+
+        /// Replay a batch of already-persisted points (recovery seeding). Accepted points only.
+        mutating func seed(_ points: [ActivityGpsPoint]) {
+            for p in points.filter(\.accepted).sorted(by: { $0.timestamp < $1.timestamp }) {
+                add(latitude: p.latitude, longitude: p.longitude, timestamp: p.timestamp)
+            }
+        }
+    }
+
     static func haversineMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double) -> Double {
         let r = 6_371_000.0
         let p1 = lat1 * .pi / 180, p2 = lat2 * .pi / 180
@@ -99,9 +150,23 @@ enum RouteDistanceEngine {
     /// threshold (pause/signal loss — dt is huge so implied speed looks plausible even for a
     /// cross-town teleport) or implying an impossible speed (GPS jump).
     private static func segmentMeters(_ a: ActivityGpsPoint, _ b: ActivityGpsPoint, profile: ActivityTrackingProfile) -> Double? {
-        let dt = b.timestamp.timeIntervalSince(a.timestamp)
+        segmentMeters(
+            lat1: a.latitude, lon1: a.longitude, t1: a.timestamp,
+            lat2: b.latitude, lon2: b.longitude, t2: b.timestamp,
+            profile: profile
+        )
+    }
+
+    /// Raw-value form shared with `Accumulator` so live accumulation and batch recompute can never
+    /// disagree on what counts as a valid segment.
+    fileprivate static func segmentMeters(
+        lat1: Double, lon1: Double, t1: Date,
+        lat2: Double, lon2: Double, t2: Date,
+        profile: ActivityTrackingProfile
+    ) -> Double? {
+        let dt = t2.timeIntervalSince(t1)
         guard dt >= 0, dt <= profile.gapSeconds else { return nil }
-        let meters = haversineMeters(lat1: a.latitude, lon1: a.longitude, lat2: b.latitude, lon2: b.longitude)
+        let meters = haversineMeters(lat1: lat1, lon1: lon1, lat2: lat2, lon2: lon2)
         if dt > 0, meters / dt > profile.maxSpeedMps { return nil }
         return meters
     }

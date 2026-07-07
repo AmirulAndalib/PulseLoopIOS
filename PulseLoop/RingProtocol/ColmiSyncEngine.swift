@@ -1,4 +1,7 @@
 import Foundation
+import os.log
+
+private let syncLog = Logger(subsystem: "xyz.sakshambhutani.pulseloop2", category: "ColmiSyncEngine")
 
 /// Colmi R02 sync engine: the response-driven history state machine + realtime-HR keepalive +
 /// measurement actions. Unlike the fire-and-forget jring, Colmi history is a chain where each reply
@@ -265,13 +268,11 @@ final class ColmiSyncEngine: RingSyncEngine {
         }
     }
 
-    /// Observe a realtime-HR reply: maintain the keepalive cadence.
+    /// Observe a realtime-HR reply. The keepalive itself is wall-clock driven (see `startHeartRate`);
+    /// this only records frame arrival for diagnostics.
     func observedRealtimeHeartRate() {
         guard realtimeHRActive else { return }
-        realtimeHRPacketCount = (realtimeHRPacketCount + 1) % 30
-        if realtimeHRPacketCount == 0 {
-            writer?.enqueue(Data(encoder.realtimeHeartRateContinue()))
-        }
+        lastRealtimeFrameAt = Date()
     }
 
     /// Paged stages (activity/HR/stress/HRV) advance day-by-day, then to the next stage. We treat an
@@ -332,12 +333,27 @@ final class ColmiSyncEngine: RingSyncEngine {
     // MARK: Realtime HR keepalive
 
     private var realtimeHRActive = false
-    private var realtimeHRPacketCount = 0
+    /// When the last realtime `0x1e` frame arrived — diagnostics only (keepalive is wall-clock driven).
+    private(set) var lastRealtimeFrameAt: Date?
+    /// Wall-clock keepalive: the ring times out realtime HR ~60s after the last continue command,
+    /// so re-arm every 25s regardless of whether reply frames are arriving/parsing. (The previous
+    /// packet-count keepalive starved itself when frames failed to parse — the stream died at 60s.)
+    private var keepaliveTask: Task<Void, Never>?
 
     func startHeartRate() {
         realtimeHRActive = true
-        realtimeHRPacketCount = 0
         writer?.enqueue(Data(encoder.realtimeHeartRate(enable: true)))
+        syncLog.debug("realtime HR stream: start")
+        keepaliveTask?.cancel()
+        keepaliveTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(25))
+                guard let self, !Task.isCancelled, self.realtimeHRActive else { return }
+                self.writer?.enqueue(Data(self.encoder.realtimeHeartRateContinue()))
+                let last = self.lastRealtimeFrameAt.map { "\(Int(Date().timeIntervalSince($0)))s ago" } ?? "never"
+                syncLog.debug("realtime HR keepalive sent (last frame: \(last, privacy: .public))")
+            }
+        }
     }
 
     func stopHeartRate() {
@@ -346,9 +362,12 @@ final class ColmiSyncEngine: RingSyncEngine {
             manualHRActive = false
             writer?.enqueue(Data(encoder.manualHeartRate(enable: false)))
         }
+        keepaliveTask?.cancel()
+        keepaliveTask = nil
         guard realtimeHRActive else { return }
         realtimeHRActive = false
         writer?.enqueue(Data(encoder.realtimeHeartRate(enable: false)))
+        syncLog.debug("realtime HR stream: stop")
     }
 
     /// Spot HR uses the ring's manual single measurement (0x69) — a *continuous* stream that warms up

@@ -40,7 +40,6 @@ final class LiveWorkoutManager {
     /// the live screen's per-second tick, so the Lock Screen stays current even when the user
     /// navigates elsewhere in the app.
     private var pushTicker: Task<Void, Never>?
-    private let pushTickerInterval: Duration = .seconds(20)
 
     init(coordinator: RingSyncCoordinator, gps: GpsRouteRecorder, context: ModelContext) {
         self.coordinator = coordinator
