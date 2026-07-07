@@ -66,9 +66,10 @@ enum TK5Command {
     static let liveSpo2: UInt8 = 0x02       // 1-byte SpO₂ %
     static let liveExtended: UInt8 = 0x03   // extended live status
 
-    // type 0x05 (async stream: history activity records on be940003)
-    static let historyRecordShort: UInt8 = 0x15   // 6-byte activity record (ts + steps)
-    static let historyRecordLong: UInt8 = 0x18    // 20-byte activity record (ts + steps + metrics)
+    // type 0x05 (async stream: history records on be940003)
+    static let historyRecordShort: UInt8 = 0x15   // packed 6-byte HR records (ts + hr)
+    static let historyRecordLong: UInt8 = 0x18    // packed 20-byte combined-vitals records
+    static let sleepRecord: UInt8 = 0x13          // multi-frame sleep timeline (header + stage segments)
 }
 
 /// Frame parsing + building for the TK5's length-prefixed CRC16 protocol.

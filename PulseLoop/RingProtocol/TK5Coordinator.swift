@@ -37,6 +37,7 @@ final class TK5Coordinator: WearableCoordinator {
     /// one stream, so any of them can be measured on demand.
     let capabilities: Set<WearableCapability> = [
         .heartRate, .spo2, .steps, .battery, .hrv,
+        .sleep, .remSleep,
         .manualHeartRate, .manualSpo2, .manualHrv,
         .realtimeHeartRate, .realtimeSteps,
         .findDevice,

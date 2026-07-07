@@ -109,9 +109,29 @@ from HRV rather than expecting a ring field.
 | `05 17` | `[ts:4][flag:1][a][b][c]` | co-varying triple (~110/73/66), also live on `06 03` |
 | `05 34` | `[ts:4][series:16]` | intraday series; carries the same HRV byte (48) |
 
+## Multi-record history frames (fixed 2026-07-07)
+
+History frames **concatenate many fixed-size records**; decoding only the first hid periodic data.
+- `05 15`: packed **6-byte** HR records `[ts:4][flag:1][hr:1]` (e.g. eight hourly overnight samples).
+- `05 18`: packed **20-byte** combined-vitals records `[ts:4][steps:2][hr@6][sys?@7][dia?@8][spo2@9]
+  [?@10][hrv@11]…`. We emit periodic **SpO₂ (@9)** and **HRV (@11)**; HR comes from `05 15`. Steps are
+  a *cumulative* daily counter (not deltas) and sync live, so not re-emitted. BP (@7/@8, plausible
+  110/75-type values) left out pending a verified reading.
+
+## Sleep (`05 13`) — VERIFIED
+
+One logical record split across several be940003 frames. **Reassembly:** the header frame starts with
+magic `af fa`, total concatenated payload length at bytes [2..3]; buffer until that many bytes arrive.
+
+Layout: 20-byte header `[af fa][totalLen:2][startTs:4][endTs:4]…`, then 8-byte segments
+`[stage:1][startTs:4][durationSec:2][pad:1]`. Segments are contiguous → expand to per-minute stages,
+emit one `.sleepTimeline`.
+
+**Stage tags verified against the app's on-screen breakdown** (deep 1h33 / light 4h9 / rem 2h10,
+window 22:33–06:27, awake 0): `0xf1`=deep, `0xf2`=light, `0xf3`=rem, `0xf4`=awake.
+
 ## Not yet decoded
 
-- **Sleep** — no sleep record has appeared in *any* capture (ring never worn overnight). The enable
-  burst now records it once worn; the record format still needs a fresh overnight capture (or the
-  app's displayed sleep breakdown) to decode. Likely a `05 xx` shape with nighttime timestamps.
-- **Temperature** — enable is sent; no data captured yet. Blood pressure: no sensor evidence.
+- **Temperature** — enable is sent; no data captured yet.
+- **Blood pressure** — likely at `05 18` offsets 7/8 (systolic/diastolic; values look plausible) but
+  unverified against a displayed reading, so not emitted.

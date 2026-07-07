@@ -50,28 +50,36 @@ struct TK5Decoder {
         // MARK: History records (be940003, type 0x05)
 
         case (TK5FrameType.register, TK5Command.historyRecordShort):
-            // `[ts:4][hr:1]` — the single metric byte tracked the live HR range in the capture.
-            // UNVERIFIED (capture-inferred).
-            let p = frame.payload
-            guard p.count >= 5 else { return [.commandAck(commandId: frame.cmd)] }
-            return [.historyMeasurement(kind: .heartRate, value: Double(p[4]),
-                                        timestamp: TK5Bytes.date(TK5Bytes.u32(p, 0)))]
+            // Packed **6-byte** HR history records: `[ts:4][flag:1][hr:1]`. One frame carries many —
+            // e.g. eight hourly overnight samples (71,66,63,62,66,60,65,58 bpm @23:00–06:00, matched
+            // to wall-clock) — so decode *every* record, not just the first (the earlier bug that hid
+            // periodic data). hr is at offset 5.
+            return records(in: frame.payload, size: 6).compactMap { r in
+                let hr = r[5]
+                guard hr > 0 else { return nil }
+                return .historyMeasurement(kind: .heartRate, value: Double(hr),
+                                           timestamp: TK5Bytes.date(TK5Bytes.u32(r, 0)))
+            }
 
         case (TK5FrameType.register, TK5Command.historyRecordLong):
-            // `[ts:4][steps:2]…[hrv:1 @offset 11]…`. steps verified (0x027b = 635 matched the live
-            // status frame); HRV verified against the app (payload[11] = 48 ms @1:00, 79 ms @1:32).
-            // Steps → additive bucket (Colmi-style, timestamp-keyed so re-syncs are idempotent); HRV →
-            // history measurement, both range-gated by RingEventBridge.
-            let p = frame.payload
-            guard p.count >= 6 else { return [.commandAck(commandId: frame.cmd)] }
-            let timestamp = TK5Bytes.date(TK5Bytes.u32(p, 0))
-            var events: [RingDecodedEvent] = [
-                .activityBucket(timestamp: timestamp, steps: TK5Bytes.u16(p, 4), distanceMeters: 0),
-            ]
-            if p.count >= 12, p[11] > 0 {
-                events.append(.historyMeasurement(kind: .hrv, value: Double(p[11]), timestamp: timestamp))
+            // Packed **20-byte** combined-vitals records: `[ts:4][steps:2][hr@6][sys?@7][dia?@8]
+            // [spo2@9][?@10][hrv@11]…`. Emit periodic SpO₂ + HRV per record (HR comes from the paired
+            // `05 15` stream, so it isn't re-emitted here). HRV verified against the app (48/79 ms);
+            // SpO₂ inferred (95–98, plausible) and range-gated. Steps here are a *cumulative* daily
+            // counter (not per-record deltas) and already sync from the live `06 00` status, so they're
+            // deliberately not re-emitted as buckets. BP (offsets 7/8) is left out pending a verified
+            // reading. All samples are range-gated downstream.
+            var events: [RingDecodedEvent] = []
+            for r in records(in: frame.payload, size: 20) {
+                let ts = TK5Bytes.date(TK5Bytes.u32(r, 0))
+                if (70...100).contains(r[9]) {
+                    events.append(.historyMeasurement(kind: .spo2, value: Double(r[9]), timestamp: ts))
+                }
+                if r[11] > 0 {
+                    events.append(.historyMeasurement(kind: .hrv, value: Double(r[11]), timestamp: ts))
+                }
             }
-            return events
+            return events.isEmpty ? [.commandAck(commandId: frame.cmd)] : events
 
         // MARK: Command channel (be940001)
 
@@ -94,5 +102,60 @@ struct TK5Decoder {
         default:
             return [.commandAck(commandId: frame.cmd)]
         }
+    }
+
+    /// Decode a fully-reassembled sleep record (see `TK5Driver` for the multi-frame reassembly).
+    /// Layout: a 20-byte header `[magic:2][totalLen:2 LE][startTs:4][endTs:4]…` followed by 8-byte
+    /// stage segments `[stage:1][startTs:4 LE][durationSec:2 LE][pad:1]`. Segments are contiguous, so
+    /// we expand each into per-minute `SleepStage`s and emit one `.sleepTimeline` anchored at the first
+    /// segment. Stage mapping verified against the app's on-screen breakdown (deep 93 / light 249 /
+    /// rem 130 min): `0xf1`=deep, `0xf2`=light, `0xf3`=rem, `0xf4`=awake.
+    func decodeSleep(_ record: [UInt8]) -> [RingDecodedEvent] {
+        let headerLen = 20
+        let segmentLen = 8
+        guard record.count >= headerLen + segmentLen else { return [] }
+
+        var stages: [SleepStage] = []
+        var startDate: Date?
+        var i = headerLen
+        while i + segmentLen <= record.count {
+            let tag = record[i]
+            guard let stage = sleepStage(tag) else { break }   // stop at padding / unknown tail
+            let segStart = TK5Bytes.u32(Array(record[i...]), 1)
+            let durationSec = TK5Bytes.u16(Array(record[i...]), 5)
+            if startDate == nil { startDate = TK5Bytes.date(segStart) }
+            let minutes = Int((Double(durationSec) / 60.0).rounded())
+            stages.append(contentsOf: Array(repeating: stage, count: max(1, minutes)))
+            i += segmentLen
+        }
+
+        guard let start = startDate, !stages.isEmpty else { return [] }
+        return [.sleepTimeline(timestamp: start, stages: stages)]
+    }
+
+    /// Map a TK5 sleep stage tag to the shared `SleepStage`. Verified against the app's displayed
+    /// deep/light/REM minutes; `nil` signals a non-stage byte (end of segment list).
+    private func sleepStage(_ tag: UInt8) -> SleepStage? {
+        switch tag {
+        case 0xf1: return .deep
+        case 0xf2: return .light
+        case 0xf3: return .rem
+        case 0xf4: return .awake
+        default: return nil
+        }
+    }
+
+    /// Split a packed history payload into fixed-size records, dropping any short trailing remainder.
+    /// TK5 history frames concatenate many equal-size records (e.g. an hour's worth of samples), so a
+    /// decoder must walk them all rather than reading only the first.
+    private func records(in payload: [UInt8], size: Int) -> [[UInt8]] {
+        guard size > 0 else { return [] }
+        var out: [[UInt8]] = []
+        var i = 0
+        while i + size <= payload.count {
+            out.append(Array(payload[i..<(i + size)]))
+            i += size
+        }
+        return out
     }
 }

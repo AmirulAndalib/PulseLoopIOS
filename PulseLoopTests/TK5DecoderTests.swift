@@ -78,19 +78,29 @@ final class TK5DecoderTests: XCTestCase {
         XCTAssertEqual(percent, 100)
     }
 
-    func testHistoryActivityRecordDecodesTimestampAndSteps() {
-        // 05 18 record: ts (2000-epoch) + steps 0x027b = 635.
-        let frame = TK5Frame(validating: bytes("05181a00f05dde317b0200000000003600000f000000b457896a"))!
-        guard case let .activityBucket(timestamp, steps, _) = decoder.decode(frame).first else {
-            return XCTFail("expected activityBucket")
+    func testHistoryShortFramePacksEightHourlyHR() {
+        // One 05 15 frame carries eight 6-byte HR records (overnight hourly samples); all must decode.
+        let frame = TK5Frame(validating: bytes(
+            "051536001cf0de3100471afede310042260cdf31003f3b1adf31003e4328df3100425136df31003c6444df3100419852df31003aa951"))!
+        let hr = decoder.decode(frame).compactMap { event -> Double? in
+            if case let .historyMeasurement(.heartRate, value, _) = event { return value } else { return nil }
         }
-        XCTAssertEqual(steps, 635)
-        // ts 0x31de5df0 in 2000-epoch seconds → 2026-07-06.
-        let comps = Calendar(identifier: .gregorian).dateComponents(
-            in: TimeZone(identifier: "UTC")!, from: timestamp)
-        XCTAssertEqual(comps.year, 2026)
-        XCTAssertEqual(comps.month, 7)
-        XCTAssertEqual(comps.day, 6)
+        XCTAssertEqual(hr, [71, 66, 63, 62, 66, 60, 65, 58])
+    }
+
+    func testHistoryLongFramePacksPeriodicSpo2AndHRV() {
+        // One 05 18 frame carries eight 20-byte combined-vitals records; each yields SpO₂ + HRV.
+        let frame = TK5Frame(validating: bytes(
+            "0518a6001cf0de31080d47734c620e3404000f00000033de1afede31000042704a610d2b02000f000000d24b260cdf3100003f7049610db106000f000000ce273b1adf3100003e6d49600c5f02000f00000077a54328df310000426f49610d2105000f000000474b5136df3100003c6f47600c2104000f00000024f66444df310000416e49610d3d05000f00000015769852df3100003a6a465f0c8002000f000000d89dc5a3"))!
+        let events = decoder.decode(frame)
+        let spo2 = events.compactMap { e -> Double? in
+            if case let .historyMeasurement(.spo2, v, _) = e { return v } else { return nil }
+        }
+        let hrv = events.compactMap { e -> Double? in
+            if case let .historyMeasurement(.hrv, v, _) = e { return v } else { return nil }
+        }
+        XCTAssertEqual(spo2, [98, 97, 97, 96, 97, 96, 97, 95])
+        XCTAssertEqual(hrv, [52, 43, 177, 95, 33, 33, 61, 128])
     }
 
     func testHistoryRecordDecodesHRV() {
@@ -106,6 +116,23 @@ final class TK5DecoderTests: XCTestCase {
             }
             XCTAssertEqual(hrv, [expected], "HRV decode for \(hex)")
         }
+    }
+
+    // MARK: Sleep
+
+    func testSleepDecodeMatchesAppBreakdown() {
+        // Reassembled 05 13 sleep record (3 frames concatenated). Stage tags f1=deep/f2=light/f3=rem,
+        // verified against the app's on-screen breakdown (deep 93 / light 249 / rem 130 min; the small
+        // deltas below are per-segment minute rounding).
+        let record = bytes("affaa4019fe9de31bd58df31ffff971efb15733af29fe9de313c0500f1dceede312d0100f30af0de31d90100f2e4f1de31c90400f1aef6de31320100f3e1f7de31c10100f2a3f9de31b50400f159fede319b0100f3f5ffde31b00100f2a501df31660200f10b04df313d0500f34809df31ae0800f2f611df31cc0100f1c213df31170200f3d915df317d0100f25617df31ef0000f34518df31060100f24b19df31670200f1b21bdf31910000f2431cdf31030000f3461cdf314c0000f2921cdf31f70100f3891edf31720200f2fb20df31e00000f3db21df31590100f23423df310e0100f34224df31d30100f21526df317a0000f38f26df31c10000f25027df31be0400f10f2cdf312f0100f33f2ddf31aa0100f2ea2edf317a0500f16534df316b0100f3d135df319e0000f17036df319e0100f20e38df31450500f1543ddf318b0100f3e03edf31de0100f2bf40df31000500f1c045df315e0100f31f47df31730100f29348df31a00000f13449df319c0000f2d049df316d0500f13e4fdf31410100f38050df31d80100f25952df31050100f15f53df311e0100f27d54df31400400")
+        guard case let .sleepTimeline(_, stages) = decoder.decodeSleep([UInt8](record)).first else {
+            return XCTFail("expected sleepTimeline")
+        }
+        // Per-minute rounding means totals land within a couple minutes of the app's displayed values.
+        XCTAssertEqual(Double(stages.filter { $0 == .light }.count), 249, accuracy: 3)
+        XCTAssertEqual(Double(stages.filter { $0 == .deep }.count), 93, accuracy: 3)
+        XCTAssertEqual(Double(stages.filter { $0 == .rem }.count), 130, accuracy: 3)
+        XCTAssertFalse(stages.contains(.awake))
     }
 
     // MARK: Live-measurement mode selection

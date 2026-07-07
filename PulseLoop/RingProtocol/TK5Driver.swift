@@ -41,12 +41,39 @@ final class TK5Driver: WearableDriver {
         TK5Frame.frame([UInt8](command))
     }
 
+    // Sleep-record reassembly. The sleep timeline (`05 13`) is one logical record split across several
+    // be940003 frames, with stage segments straddling frame boundaries. The header frame starts with
+    // the `af fa` magic and carries the total concatenated payload length at bytes [2..3]; we buffer
+    // until that many bytes arrive, then decode.
+    private var sleepBuffer: [UInt8] = []
+    private var sleepTotal = 0
+
     // MARK: Inbound decode
     func ingest(_ data: Data, from characteristic: CBUUID) -> [RingDecodedEvent] {
         guard let frame = TK5Frame(validating: data) else {
             return [.unknown(commandId: data.first ?? 0, raw: data)]
         }
+        if frame.type == TK5FrameType.register, frame.cmd == TK5Command.sleepRecord {
+            return reassembleSleep(frame.payload)
+        }
         return decoder.decode(frame)
+    }
+
+    private func reassembleSleep(_ payload: [UInt8]) -> [RingDecodedEvent] {
+        if payload.count >= 4, payload[0] == 0xaf, payload[1] == 0xfa {
+            // Header frame — start a fresh buffer and read the total length.
+            sleepBuffer = payload
+            sleepTotal = Int(payload[2]) | (Int(payload[3]) << 8)
+        } else if !sleepBuffer.isEmpty {
+            sleepBuffer.append(contentsOf: payload)   // continuation
+        } else {
+            return []   // continuation with no header seen (mid-stream connect) — ignore
+        }
+        guard sleepTotal > 0, sleepBuffer.count >= sleepTotal else { return [] }
+        let record = sleepBuffer
+        sleepBuffer = []
+        sleepTotal = 0
+        return decoder.decodeSleep(record)
     }
 
     func makeSyncEngine() -> RingSyncEngine {
