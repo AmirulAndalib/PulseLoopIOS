@@ -32,8 +32,12 @@ struct TK5Decoder {
             return [.heartRateSample(bpm: Int(bpm), timestamp: now)]
 
         case (TK5FrameType.stream, TK5Command.liveSpo2):
-            // 1-byte live SpO₂ %. UNVERIFIED (capture-inferred): values sat in 95–98, i.e. plausible.
-            guard let spo2 = frame.payload.first else { return [.commandAck(commandId: frame.cmd)] }
+            // 1-byte live SpO₂ % from the mode-0x02 (red-LED) stream; values sat in 95–98 in the
+            // capture. Gate to a plausible range so a warm-up 0 isn't surfaced as a reading (the event
+            // bridge doesn't range-gate SpO₂).
+            guard let spo2 = frame.payload.first, (70...100).contains(spo2) else {
+                return [.commandAck(commandId: frame.cmd)]
+            }
             return [.spo2Result(value: Int(spo2), timestamp: now)]
 
         case (TK5FrameType.stream, TK5Command.liveExtended):

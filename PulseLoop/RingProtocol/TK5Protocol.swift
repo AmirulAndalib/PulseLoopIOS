@@ -29,8 +29,9 @@ enum TK5UUIDs {
     /// Async stream — live HR / steps / SpO₂ and downloaded history records (indicate).
     static let stream = "be940003-7333-be46-b7ae-689e71722bd5"
 
-    /// Standard BLE Heart Rate service + measurement char, present on the ring as an
-    /// auth-independent fallback live-HR source (the proprietary stream needs the ring "worn").
+    /// Standard BLE Heart Rate service + measurement char. Present on the ring but **deliberately not
+    /// subscribed** (see `TK5Driver`): it emits a cached resting HR even off-finger (~87 bpm), which
+    /// would mask real on-demand readings. Kept here only to document the GATT layout.
     static let heartRateService = "180D"
     static let heartRateMeasurement = "2A37"
 }

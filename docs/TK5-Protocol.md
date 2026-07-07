@@ -16,7 +16,7 @@ which range-gates each metric, so a misdecoded byte is dropped rather than persi
 | `be940000-7333-be46-b7ae-689e71722bd5` | `be940001` | 0x000c | write + indicate | **Command channel** — app writes here and receives command replies here |
 | | `be940002` | 0x000f | write-no-resp | unused in capture |
 | | `be940003` | 0x0011 | indicate | **Async stream** — live HR/steps/SpO₂ + history records |
-| `180D` (Heart Rate) | `2A37` | 0x006e | notify | standard-BLE fallback live HR (auth-independent) |
+| `180D` (Heart Rate) | `2A37` | 0x006e | notify | standard HR — **not subscribed**: emits a cached resting HR (~87 bpm) even off-finger, which masks real readings. Live HR uses the proprietary `06 01` stream instead. |
 | `FEE7` | FEC9/FEA1/FEA2 | | | present, unused |
 | `AE00` | AE01/AE02 | 0x0082/0x0084 | write / notify | encrypted `fedcba`/"pass" login — see below |
 
@@ -51,7 +51,7 @@ wall-clock time.
 | `02 24` | history dump start | payload `f0` header marker; records then stream on be940003 |
 | `02 26` | history page | pull next page |
 | `02 28` | history ack/finish | |
-| `03 2f` | live stream on/off | `0100` on / `0000` off |
+| `03 2f` | live measurement on/off | payload `[enable:1][mode:1]`; **mode picks the sensor**: `00`=HR (green LED)→`06 01`, `02`=SpO₂ (red/IR LED)→`06 02`, `0a`=HRV→`06 03`; stop = `00 00` |
 
 ## Async stream (be940003)
 

@@ -108,6 +108,17 @@ final class TK5DecoderTests: XCTestCase {
         }
     }
 
+    // MARK: Live-measurement mode selection
+
+    func testLiveMeasurementModesUseDistinctSensors() {
+        // The 03 2f payload's mode byte selects the sensor/LED; each metric must use its own.
+        let e = TK5Encoder()
+        XCTAssertEqual(e.heartRateStart(), [0x03, 0x2f, 0x01, 0x00])  // HR (green)
+        XCTAssertEqual(e.spo2Start(), [0x03, 0x2f, 0x01, 0x02])       // SpO₂ (red/IR)
+        XCTAssertEqual(e.hrvStart(), [0x03, 0x2f, 0x01, 0x0a])        // HRV
+        XCTAssertEqual(e.liveStreamStop(), [0x03, 0x2f, 0x00, 0x00])  // stop (mode-agnostic)
+    }
+
     // MARK: Coordinator recognition
 
     @MainActor

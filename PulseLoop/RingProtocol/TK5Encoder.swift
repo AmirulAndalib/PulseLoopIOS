@@ -64,9 +64,14 @@ struct TK5Encoder {
 
     // MARK: - Live actions
 
-    /// Live stream start/stop. The app toggles `03 2f` (`0100` on / `0000` off) around the live
-    /// HR/SpO₂ stream on be940003. UNVERIFIED (capture-inferred): exact semantics of the `03 09` pokes.
-    func liveStreamStart() -> [UInt8] { logical("03", "2f", "0100") }
+    /// Live measurement start/stop via `03 2f` with a `[enable:1][mode:1]` payload. The **mode byte
+    /// selects the sensor**, verified against the capture: mode 0x00 = heart rate (green LED) → `06 01`
+    /// stream, 0x02 = SpO₂ (red/IR LED) → `06 02`, 0x0a = HRV → `06 03`. Stop is mode-agnostic
+    /// (`00 00`). Using the wrong mode lights the wrong LED and yields no reading, so each metric must
+    /// use its own start.
+    func heartRateStart() -> [UInt8] { logical("03", "2f", "0100") }
+    func spo2Start() -> [UInt8] { logical("03", "2f", "0102") }
+    func hrvStart() -> [UInt8] { logical("03", "2f", "010a") }
     func liveStreamStop() -> [UInt8] { logical("03", "2f", "0000") }
 
     /// Find-device / bond nudge (`04 0e`). Best-effort; the TK5 has no confirmed vibrate command in

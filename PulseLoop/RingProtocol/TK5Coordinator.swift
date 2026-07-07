@@ -30,8 +30,14 @@ final class TK5Coordinator: WearableCoordinator {
     /// live, verified against the app's displayed values), and the in-band battery. Stress is *not*
     /// claimed — the ring doesn't store it; SmartHealth derives it from HRV app-side. Sleep/temperature
     /// are omitted until a capture contains them, so no empty cards appear.
+    ///
+    /// `manualHeartRate` / `manualSpo2` / `manualHrv` surface the "Measure now" buttons in Vitals: a
+    /// spot reading toggles the live `03 2f` stream on, collects the first good sample from the
+    /// `06 01` (HR) / `06 02` (SpO₂) / `06 03` (HRV) frames, then toggles it off. All three ride the
+    /// one stream, so any of them can be measured on demand.
     let capabilities: Set<WearableCapability> = [
         .heartRate, .spo2, .steps, .battery, .hrv,
+        .manualHeartRate, .manualSpo2, .manualHrv,
         .realtimeHeartRate, .realtimeSteps,
         .findDevice,
     ]

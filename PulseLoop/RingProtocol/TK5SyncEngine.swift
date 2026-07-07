@@ -72,10 +72,14 @@ final class TK5SyncEngine: RingSyncEngine {
         }
     }
 
-    // MARK: Live actions (proprietary 06-stream, toggled by 03 2f)
+    // MARK: Live actions (proprietary 06-stream on be940003, mode-selected by 03 2f)
+    //
+    // The `03 2f` payload is [enable, mode]; the mode byte picks the sensor/LED (HR 0x00 → 06 01,
+    // SpO₂ 0x02 → 06 02, HRV 0x0a → 06 03). Each metric must start its own mode — the shared stop is
+    // mode-agnostic. Only one mode runs at a time, so start-then-stop per measurement is correct.
 
     func startHeartRate() {
-        writer?.enqueue(Data(encoder.liveStreamStart()))
+        writer?.enqueue(Data(encoder.heartRateStart()))
     }
 
     func stopHeartRate() {
@@ -83,11 +87,18 @@ final class TK5SyncEngine: RingSyncEngine {
     }
 
     func startSpO2() {
-        // SpO₂ rides the same live stream as HR.
-        writer?.enqueue(Data(encoder.liveStreamStart()))
+        writer?.enqueue(Data(encoder.spo2Start()))
     }
 
     func stopSpO2() {
+        writer?.enqueue(Data(encoder.liveStreamStop()))
+    }
+
+    func startHRV() {
+        writer?.enqueue(Data(encoder.hrvStart()))
+    }
+
+    func stopHRV() {
         writer?.enqueue(Data(encoder.liveStreamStop()))
     }
 
