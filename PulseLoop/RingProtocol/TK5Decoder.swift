@@ -41,18 +41,7 @@ struct TK5Decoder {
             return [.spo2Result(value: Int(spo2), timestamp: now)]
 
         case (TK5FrameType.stream, TK5Command.liveExtended):
-            // This live frame carries two different shapes depending on the active measurement mode:
-            //   BP  (mode 0x01): `[sys][dia][hr?]…`  — verified against the app (111/74, 112/75)
-            //   HRV (mode 0x0a): `[0 0 0][hrv]…`      — verified against the app (79, 177 ms)
-            // Distinguish by the leading bytes; both are range-gated downstream.
-            let p = frame.payload
-            if p.count >= 2, (60...250).contains(p[0]), (30...160).contains(p[1]) {
-                return [.bloodPressureSample(systolic: Int(p[0]), diastolic: Int(p[1]), timestamp: now)]
-            }
-            if p.count >= 4, p[3] > 0 {
-                return [.hrvSample(value: Int(p[3]), timestamp: now)]
-            }
-            return [.commandAck(commandId: frame.cmd)]
+            return decodeLiveExtended(frame.payload, cmd: frame.cmd, now: now)
 
         // MARK: History records (be940003, type 0x05)
 
@@ -69,34 +58,7 @@ struct TK5Decoder {
             }
 
         case (TK5FrameType.register, TK5Command.historyRecordLong):
-            // Packed **20-byte** combined-vitals records: `[ts:4][steps:2][hr@6][sys?@7][dia?@8]
-            // [spo2@9][?@10][hrv@11]…`. Emit periodic SpO₂ + HRV per record (HR comes from the paired
-            // `05 15` stream, so it isn't re-emitted here). HRV verified against the app (48/79 ms);
-            // SpO₂ inferred (95–98, plausible) and range-gated. Steps here are a *cumulative* daily
-            // counter (not per-record deltas) and already sync from the live `06 00` status, so they're
-            // deliberately not re-emitted as buckets. BP (offsets 7/8) is left out pending a verified
-            // reading. All samples are range-gated downstream.
-            var events: [RingDecodedEvent] = []
-            for r in records(in: frame.payload, size: 20) {
-                let ts = TK5Bytes.date(TK5Bytes.u32(r, 0))
-                // Steps @4/5 are a *cumulative* per-day counter (rises through the day, resets to 0 at
-                // midnight). Emit as an `activityUpdate` (per-day max) — not an additive bucket — so
-                // each day's row (incl. today's) tracks the ring's running total and resets daily.
-                // distance/calories are 0 here (max() leaves any live-status values intact).
-                events.append(.activityUpdate(timestamp: ts, steps: TK5Bytes.u16(r, 4),
-                                              distanceMeters: 0, calories: 0))
-                if (60...250).contains(r[7]), (30...160).contains(r[8]) {
-                    // Systolic @7 / diastolic @8 — verified against the app (106/70 @6:00).
-                    events.append(.bloodPressureSample(systolic: Int(r[7]), diastolic: Int(r[8]), timestamp: ts))
-                }
-                if (70...100).contains(r[9]) {
-                    events.append(.historyMeasurement(kind: .spo2, value: Double(r[9]), timestamp: ts))
-                }
-                if r[11] > 0 {
-                    events.append(.historyMeasurement(kind: .hrv, value: Double(r[11]), timestamp: ts))
-                }
-            }
-            return events.isEmpty ? [.commandAck(commandId: frame.cmd)] : events
+            return decodeCombinedVitals(frame.payload, cmd: frame.cmd)
 
         // MARK: Command channel (be940001)
 
@@ -119,6 +81,46 @@ struct TK5Decoder {
         default:
             return [.commandAck(commandId: frame.cmd)]
         }
+    }
+
+    /// The `06 03` live frame carries two shapes depending on the active measurement mode:
+    ///   BP  (mode 0x01): `[sys][dia][hr?]…`  — verified against the app (111/74, 112/75)
+    ///   HRV (mode 0x0a): `[0 0 0][hrv]…`      — verified against the app (79, 177 ms)
+    /// Distinguish by the leading bytes; both are range-gated downstream.
+    private func decodeLiveExtended(_ p: [UInt8], cmd: UInt8, now: Date) -> [RingDecodedEvent] {
+        if p.count >= 2, (60...250).contains(p[0]), (30...160).contains(p[1]) {
+            return [.bloodPressureSample(systolic: Int(p[0]), diastolic: Int(p[1]), timestamp: now)]
+        }
+        if p.count >= 4, p[3] > 0 {
+            return [.hrvSample(value: Int(p[3]), timestamp: now)]
+        }
+        return [.commandAck(commandId: cmd)]
+    }
+
+    /// Packed **20-byte** combined-vitals history records: `[ts:4][steps:2][hr@6][sys?@7][dia?@8]
+    /// [spo2@9][?@10][hrv@11]…`, many per frame. Emit periodic SpO₂ + HRV (HR comes from the paired
+    /// `05 15` stream, so it isn't re-emitted here) plus per-day steps. HRV verified against the app
+    /// (48/79 ms); SpO₂ inferred (95–98) and range-gated; BP verified (106/70 @6:00). Steps are a
+    /// *cumulative* daily counter (rises through the day, resets to 0 at midnight), so they're emitted
+    /// as an `activityUpdate` (per-day max) — not an additive bucket — with distance/calories 0 so
+    /// `max()` leaves any live-status values intact.
+    private func decodeCombinedVitals(_ payload: [UInt8], cmd: UInt8) -> [RingDecodedEvent] {
+        var events: [RingDecodedEvent] = []
+        for r in records(in: payload, size: 20) {
+            let ts = TK5Bytes.date(TK5Bytes.u32(r, 0))
+            events.append(.activityUpdate(timestamp: ts, steps: TK5Bytes.u16(r, 4),
+                                          distanceMeters: 0, calories: 0))
+            if (60...250).contains(r[7]), (30...160).contains(r[8]) {
+                events.append(.bloodPressureSample(systolic: Int(r[7]), diastolic: Int(r[8]), timestamp: ts))
+            }
+            if (70...100).contains(r[9]) {
+                events.append(.historyMeasurement(kind: .spo2, value: Double(r[9]), timestamp: ts))
+            }
+            if r[11] > 0 {
+                events.append(.historyMeasurement(kind: .hrv, value: Double(r[11]), timestamp: ts))
+            }
+        }
+        return events.isEmpty ? [.commandAck(commandId: cmd)] : events
     }
 
     /// Decode a fully-reassembled sleep record (see `TK5Driver` for the multi-frame reassembly).

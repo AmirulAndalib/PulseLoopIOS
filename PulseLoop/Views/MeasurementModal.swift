@@ -128,9 +128,14 @@ struct MeasurementSheet: View {
         guard ble.state == .connected else {
             return "Your ring isn't connected. Reconnect it and try again."
         }
-        return kind == .hr
-            ? "Couldn't get a heart-rate reading. Make sure the ring is snug and worn on your finger, then try again."
-            : "Couldn't get a blood-oxygen reading. Wear the ring snugly and keep still, then try again. SpO₂ also builds up over a while of wear."
+        switch kind {
+        case .hr:
+            return "Couldn't get a heart-rate reading. Make sure the ring is snug and worn on your finger, then try again."
+        case .spo2:
+            return "Couldn't get a blood-oxygen reading. Wear the ring snugly and keep still, then try again."
+        case .hrv:
+            return "Couldn't get an HRV reading. Wear the ring snugly, keep still, and try again."
+        }
     }
 
     private var phaseCopy: String {
