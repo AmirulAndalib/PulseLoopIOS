@@ -81,7 +81,7 @@ struct RecordSummaryView: View {
                         HStack(spacing: 6) {
                             ProgressView().controlSize(.mini)
                             Text("Updating from ring…")
-                                .font(.system(size: 12))
+                                .font(PulseFont.caption.weight(.regular))
                                 .foregroundStyle(PulseColors.textMuted)
                         }
                         .frame(maxWidth: .infinity)
@@ -124,13 +124,13 @@ struct RecordSummaryView: View {
 
     private var effortCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("How did this feel?").font(.system(size: 15, weight: .medium)).foregroundStyle(PulseColors.textPrimary)
+            Text("How did this feel?").font(PulseFont.callout).foregroundStyle(PulseColors.textPrimary)
             HStack(spacing: 8) {
                 ForEach(efforts, id: \.0) { value, label in
                     let active = effort == value
                     Button { effort = value } label: {
                         Text(label)
-                            .font(.system(size: 13, weight: .medium))
+                            .font(PulseFont.footnote)
                             .foregroundStyle(active ? PulseColors.textPrimary : PulseColors.textSecondary)
                             .padding(.horizontal, 12).padding(.vertical, 8)
                             .background(active ? PulseColors.accentSoft : PulseColors.cardSoft, in: Capsule())
@@ -141,7 +141,7 @@ struct RecordSummaryView: View {
             }
             TextField("Add a note…", text: $note, axis: .vertical)
                 .lineLimit(2...4)
-                .font(.system(size: 14))
+                .font(PulseFont.subheadline.weight(.regular))
                 .padding(12)
                 .background(PulseColors.cardSoft, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
@@ -181,15 +181,15 @@ struct LiveSensorTile: View {
                 if pulsing {
                     Circle().fill(tint).frame(width: 7, height: 7).opacity(pulse ? 0.3 : 1)
                 }
-                Text(label.uppercased()).font(.system(size: 11, weight: .medium)).tracking(1.0).foregroundStyle(PulseColors.textMuted)
+                Text(label.uppercased()).font(PulseFont.caption2).tracking(1.0).foregroundStyle(PulseColors.textMuted)
             }
             HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text(value).font(.system(size: 28, weight: .semibold)).monospacedDigit()
+                Text(value).font(PulseFont.title).monospacedDigit()
                     .foregroundStyle(muted ? PulseColors.textMuted : PulseColors.textPrimary)
                     .minimumScaleFactor(0.6).lineLimit(1)
-                if let unit { Text(unit).font(.system(size: 13, weight: .medium)).foregroundStyle(PulseColors.textMuted) }
+                if let unit { Text(unit).font(PulseFont.footnote).foregroundStyle(PulseColors.textMuted) }
             }
-            Text(subtitle).font(.system(size: 11)).foregroundStyle(PulseColors.textMuted).lineLimit(1)
+            Text(subtitle).font(PulseFont.caption2.weight(.regular)).foregroundStyle(PulseColors.textMuted).lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
@@ -281,8 +281,8 @@ struct StatusPill: View {
     let tint: Color
     var body: some View {
         HStack(spacing: 4) {
-            Image(systemName: icon).font(.system(size: 9))
-            Text(text).font(.system(size: 10, weight: .medium))
+            Image(systemName: icon).font(PulseFont.nano.weight(.regular))
+            Text(text).font(PulseFont.micro)
         }
         .foregroundStyle(tint)
         .padding(.horizontal, 8).padding(.vertical, 4)
@@ -332,12 +332,12 @@ struct RecordingQualityCard: View {
     var body: some View {
         let rows = qualityRows()
         VStack(alignment: .leading, spacing: 12) {
-            Text("RECORDING QUALITY").font(.system(size: 11, weight: .medium)).tracking(1.0).foregroundStyle(PulseColors.textMuted)
+            Text("RECORDING QUALITY").font(PulseFont.caption2).tracking(1.0).foregroundStyle(PulseColors.textMuted)
             ForEach(rows.indices, id: \.self) { i in
                 HStack {
-                    Text(rows[i].0).font(.system(size: 13)).foregroundStyle(PulseColors.textSecondary)
+                    Text(rows[i].0).font(PulseFont.footnote.weight(.regular)).foregroundStyle(PulseColors.textSecondary)
                     Spacer()
-                    Text(rows[i].1).font(.system(size: 13, weight: .medium).monospacedDigit()).foregroundStyle(rows[i].2)
+                    Text(rows[i].1).font(PulseFont.footnote.monospacedDigit()).foregroundStyle(rows[i].2)
                 }
             }
         }

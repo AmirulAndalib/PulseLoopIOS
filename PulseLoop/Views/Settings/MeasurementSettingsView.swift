@@ -56,7 +56,7 @@ struct MeasurementSettingsView: View {
 
         SectionHeader(title: "Other vitals", action: nil)
         Text("These vitals are recorded in the background throughout the day. The ring doesn't expose a separate interval for them, so each is a simple on/off.")
-            .font(.system(size: 12))
+            .font(PulseFont.caption.weight(.regular))
             .foregroundStyle(PulseColors.textMuted)
             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -79,10 +79,10 @@ struct MeasurementSettingsView: View {
     private var hrIntervalCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Measure every").font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textPrimary)
+                Text("Measure every").font(PulseFont.subheadline).foregroundStyle(PulseColors.textPrimary)
                 Spacer()
                 Text("\(hrIntervalMinutes) min")
-                    .font(.system(size: 15, weight: .semibold)).monospacedDigit()
+                    .font(PulseFont.callout.weight(.semibold)).monospacedDigit()
                     .foregroundStyle(PulseColors.accent)
             }
             Slider(
@@ -106,7 +106,7 @@ struct MeasurementSettingsView: View {
 
     private func toggleRow(_ title: String, isOn: Binding<Bool>) -> some View {
         Toggle(isOn: isOn) {
-            Text(title).font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textPrimary)
+            Text(title).font(PulseFont.subheadline).foregroundStyle(PulseColors.textPrimary)
         }
         .tint(PulseColors.accent)
         .padding(.horizontal, 16).padding(.vertical, 8)

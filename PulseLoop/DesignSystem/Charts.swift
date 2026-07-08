@@ -85,10 +85,10 @@ struct StressGaugeChart: View {
                 .rotationEffect(.degrees(135))
             VStack(spacing: 2) {
                 Text("\(Int(value))")
-                    .font(.system(size: 38, weight: .semibold)).monospacedDigit()
+                    .font(PulseFont.largeTitle).monospacedDigit()
                     .foregroundStyle(PulseColors.textPrimary)
                 Text(zone.label.uppercased())
-                    .font(.system(size: 10, weight: .semibold)).tracking(1.2)
+                    .font(PulseFont.micro.weight(.semibold)).tracking(1.2)
                     .foregroundStyle(zone.color)
             }
         }
@@ -478,7 +478,7 @@ struct SleepHypnogramView: View {
                 VStack(alignment: .leading) {
                     ForEach(lanes, id: \.self) { stage in
                         Text(stage.rawValue.uppercased())
-                            .font(.system(size: 10, weight: .semibold))
+                            .font(PulseFont.micro.weight(.semibold))
                             .tracking(1.4)
                             .foregroundStyle(SleepStageColors.color(for: stage))
                         if stage != lanes.last { Spacer() }
@@ -530,7 +530,7 @@ struct SleepHypnogramView: View {
             HStack {
                 ForEach(Array(ticks.enumerated()), id: \.offset) { index, tick in
                     Text(tick.label)
-                        .font(.system(size: 10).monospacedDigit())
+                        .font(PulseFont.micro.weight(.regular).monospacedDigit())
                         .foregroundStyle(PulseColors.textMuted)
                     if index != ticks.count - 1 { Spacer() }
                 }

@@ -118,7 +118,7 @@ struct NotificationsSettingsView: View {
 
     private func labeledRow<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         HStack {
-            Text(title).font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textPrimary)
+            Text(title).font(PulseFont.subheadline).foregroundStyle(PulseColors.textPrimary)
             Spacer()
             content()
         }
@@ -130,7 +130,7 @@ struct NotificationsSettingsView: View {
 
     private func toggleRow(_ title: String, isOn: Binding<Bool>) -> some View {
         Toggle(isOn: isOn) {
-            Text(title).font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textPrimary)
+            Text(title).font(PulseFont.subheadline).foregroundStyle(PulseColors.textPrimary)
         }
         .tint(PulseColors.accent)
         .padding(.horizontal, 16).padding(.vertical, 6)

@@ -66,7 +66,7 @@ struct CalibrationSettingsView: View {
         Enter a reading from a cuff taken at the same time as a ring measurement. We send it to the \
         ring to correct its sensor and adjust the values shown here.
         """)
-            .font(.system(size: 12)).foregroundStyle(PulseColors.textMuted)
+            .font(PulseFont.caption.weight(.regular)).foregroundStyle(PulseColors.textMuted)
             .frame(maxWidth: .infinity, alignment: .leading)
 
         numberRow("Reference systolic (mmHg)", text: $bpSystolicText)
@@ -91,7 +91,7 @@ struct CalibrationSettingsView: View {
         The ring estimates blood sugar from your profile, not a real sensor. Enter a lab or meter \
         reading taken alongside a ring measurement to offset the displayed values.
         """)
-            .font(.system(size: 12)).foregroundStyle(PulseColors.textMuted)
+            .font(PulseFont.caption.weight(.regular)).foregroundStyle(PulseColors.textMuted)
             .frame(maxWidth: .infinity, alignment: .leading)
 
         numberRow("Reference (mg/dL)", text: $glucoseRefText)
@@ -108,7 +108,7 @@ struct CalibrationSettingsView: View {
 
     private func numberRow(_ title: String, text: Binding<String>) -> some View {
         HStack {
-            Text(title).font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textPrimary)
+            Text(title).font(PulseFont.subheadline).foregroundStyle(PulseColors.textPrimary)
             Spacer()
             TextField("0", text: text)
                 .keyboardType(.numberPad)

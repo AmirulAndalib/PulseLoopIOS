@@ -88,7 +88,7 @@ struct AboutSettingsView: View {
         .overlay(alignment: .bottom) {
             if let toast {
                 Text(toast)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(PulseFont.footnote)
                     .foregroundStyle(PulseColors.textPrimary)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
@@ -140,17 +140,17 @@ struct AboutSettingsView: View {
         Link(destination: url) {
             HStack(spacing: 14) {
                 Image(systemName: icon)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(PulseFont.callout.weight(.semibold))
                     .foregroundStyle(PulseColors.accent)
                     .frame(width: 36, height: 36)
                     .background(PulseColors.accent.opacity(0.14), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(.system(size: 15, weight: .semibold)).foregroundStyle(PulseColors.textPrimary)
-                    Text(subtitle).font(.system(size: 12)).foregroundStyle(PulseColors.textSecondary)
+                    Text(title).font(PulseFont.callout.weight(.semibold)).foregroundStyle(PulseColors.textPrimary)
+                    Text(subtitle).font(PulseFont.caption.weight(.regular)).foregroundStyle(PulseColors.textSecondary)
                 }
                 Spacer(minLength: 8)
                 Image(systemName: "arrow.up.right")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(PulseFont.caption.weight(.semibold))
                     .foregroundStyle(PulseColors.textMuted)
             }
             .frame(maxWidth: .infinity, alignment: .leading)

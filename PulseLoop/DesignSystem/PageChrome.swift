@@ -53,7 +53,7 @@ struct PageHeader<Trailing: View>: View {
         ZStack {
             // Centered title — one canonical style for every page.
             Text(title)
-                .font(.system(size: 17, weight: .semibold))
+                .font(PulseFont.headline)
                 .foregroundStyle(PulseColors.textPrimary)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity)
@@ -61,7 +61,7 @@ struct PageHeader<Trailing: View>: View {
             HStack(spacing: 8) {
                 Button { dismiss() } label: {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(PulseFont.bodyEmphasis)
                         .foregroundStyle(PulseColors.textPrimary)
                         .frame(width: 36, height: 36)
                         .pulseGlass(Circle(), interactive: true)

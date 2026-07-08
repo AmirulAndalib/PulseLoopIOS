@@ -28,7 +28,7 @@ struct MetricPrefsSettingsView: View {
             VStack(spacing: 16) {
                 SectionHeader(title: "Visible tiles", action: nil)
                 Text(visibilityBlurb)
-                    .font(.system(size: 12))
+                    .font(PulseFont.caption.weight(.regular))
                     .foregroundStyle(PulseColors.textMuted)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -39,7 +39,7 @@ struct MetricPrefsSettingsView: View {
                 SectionHeader(title: "Chart detail", action: nil)
                 Text("When the ring measures often, charts can look busy. Smoother levels average nearby points into a cleaner line — "
                      + "this only changes the display on this page, not your stored data.")
-                    .font(.system(size: 12))
+                    .font(PulseFont.caption.weight(.regular))
                     .foregroundStyle(PulseColors.textMuted)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -79,7 +79,7 @@ struct MetricPrefsSettingsView: View {
         )) {
             HStack(spacing: 10) {
                 Circle().fill(color).frame(width: 8, height: 8)
-                Text(label).font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textPrimary)
+                Text(label).font(PulseFont.subheadline).foregroundStyle(PulseColors.textPrimary)
             }
         }
         .tint(PulseColors.accent)

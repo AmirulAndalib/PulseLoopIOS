@@ -250,12 +250,12 @@ struct AppHeader: View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 1) {
                 Text("PulseLoop")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(PulseFont.caption)
                     .textCase(.uppercase)
                     .tracking(1.2)
                     .foregroundStyle(PulseColors.textMuted)
                 Text(greetingForHour())
-                    .font(.system(size: 20, weight: .semibold))
+                    .font(PulseFont.title3)
                     .foregroundStyle(PulseColors.textPrimary)
                     .lineLimit(1)
             }
@@ -263,7 +263,7 @@ struct AppHeader: View {
             // Clean top bar: just the live connection status. Settings is in the tab
             // bar; Coach is the floating bubble above the tab bar.
             ConnectionStatusPill(state: effectiveState, batteryPercent: effectiveBattery)
-                .font(.system(size: 17))
+                .font(PulseFont.headline.weight(.regular))
                 .foregroundStyle(PulseColors.textSecondary)
                 // Tap the status pill → Wearable settings (add-a-ring / status).
                 .onTapGesture { path.append(AppRoute.settingsWearable) }
@@ -300,7 +300,7 @@ struct ConnectionStatusPill: View {
                 .frame(width: 8, height: 8)
                 .opacity(isPulsing && pulse ? 0.35 : 1)
             Text(label)
-                .font(.system(size: 12, weight: .medium))
+                .font(PulseFont.caption)
                 .foregroundStyle(PulseColors.textSecondary)
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
@@ -367,7 +367,7 @@ struct CoachFAB: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: "bubble.left.and.text.bubble.right.fill")
-                .font(.system(size: 21, weight: .semibold))
+                .font(PulseFont.title2)
                 .foregroundStyle(PulseColors.accent)
                 .frame(width: 56, height: 56)
                 .modifier(CoachFABGlass())
@@ -427,7 +427,7 @@ struct BottomNavBar: View {
                 } label: {
                     VStack(spacing: 4) {
                         Image(systemName: tab.symbol)
-                            .font(.system(size: 17, weight: .semibold))
+                            .font(PulseFont.headline)
                             .frame(width: 38, height: 28)
                             .background {
                                 // The active lozenge slides between tabs instead of
@@ -439,7 +439,7 @@ struct BottomNavBar: View {
                                 }
                             }
                         Text(tab.rawValue)
-                            .font(.system(size: 10, weight: .medium))
+                            .font(PulseFont.micro)
                     }
                     .foregroundStyle(isSelected ? PulseColors.textPrimary : PulseColors.textMuted)
                     .frame(maxWidth: .infinity)
@@ -469,11 +469,11 @@ struct OnboardingHeader: View {
     var body: some View {
         VStack(spacing: 10) {
             Text(title)
-                .font(.system(size: 34, weight: .semibold, design: .rounded))
+                .font(PulseFont.numberHero)
                 .foregroundStyle(PulseColors.textPrimary)
                 .multilineTextAlignment(.center)
             Text(subtitle)
-                .font(.system(size: 15))
+                .font(PulseFont.callout.weight(.regular))
                 .foregroundStyle(PulseColors.textSecondary)
                 .multilineTextAlignment(.center)
                 .lineSpacing(4)
@@ -489,7 +489,7 @@ struct SectionHeader: View {
     var body: some View {
         HStack {
             Text(title)
-                .font(.system(size: 13, weight: .semibold))
+                .font(PulseFont.footnote.weight(.semibold))
                 .foregroundStyle(PulseColors.textSecondary)
                 .textCase(.uppercase)
             Spacer()
@@ -517,7 +517,7 @@ struct StatusCopy: View {
                 Text(title)
                     .font(.headline)
                 Text(text)
-                    .font(.system(size: 14))
+                    .font(PulseFont.subheadline.weight(.regular))
                     .foregroundStyle(PulseColors.textSecondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -557,8 +557,8 @@ struct InlineEmptyState: View {
     let message: String
     var body: some View {
         VStack(spacing: 4) {
-            Text(title).font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textPrimary)
-            Text(message).font(.system(size: 12)).foregroundStyle(PulseColors.textMuted).multilineTextAlignment(.center)
+            Text(title).font(PulseFont.subheadline).foregroundStyle(PulseColors.textPrimary)
+            Text(message).font(PulseFont.caption.weight(.regular)).foregroundStyle(PulseColors.textMuted).multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 24)

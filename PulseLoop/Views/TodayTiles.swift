@@ -30,7 +30,7 @@ struct TodayTile<Content: View>: View {
                     Circle().fill(color).frame(width: 8, height: 8)
                         .shadow(color: color.opacity(0.7), radius: 5)
                     Text(label.uppercased())
-                        .font(.system(size: 11, weight: .medium))
+                        .font(PulseFont.caption2)
                         .tracking(0.6)
                         .foregroundStyle(PulseColors.textMuted)
                         .lineLimit(1)
@@ -99,11 +99,11 @@ struct ActivityTileView: View {
                     ForEach(Array(values.enumerated()), id: \.offset) { _, value in
                         VStack(alignment: .leading, spacing: 0) {
                             Text(value.label)
-                                .font(.system(size: 10, weight: .semibold))
+                                .font(PulseFont.micro.weight(.semibold))
                                 .tracking(0.8)
                                 .foregroundStyle(value.color)
                             Text(value.text)
-                                .font(.system(size: 26, weight: .semibold))
+                                .font(PulseFont.title)
                                 .monospacedDigit()
                                 .foregroundStyle(PulseColors.textPrimary)
                                 // Let long values (e.g. "8,401") shrink to fit the
@@ -136,7 +136,7 @@ struct SleepTileView: View {
                 let score = SleepScore.calculate(sleep).score
                 VStack(alignment: .leading, spacing: 10) {
                     Text(SleepFormat.duration(sleep.session.totalMinutes))
-                        .font(.system(size: 30, weight: .semibold))
+                        .font(PulseFont.greeting)
                         .monospacedDigit()
                         .foregroundStyle(PulseColors.textPrimary)
                         .minimumScaleFactor(0.7)
@@ -145,11 +145,11 @@ struct SleepTileView: View {
                         .frame(height: 24)
                     HStack(alignment: .firstTextBaseline, spacing: 5) {
                         Text("\(score)")
-                            .font(.system(size: 32, weight: .semibold))
+                            .font(PulseFont.greeting)
                             .monospacedDigit()
                             .foregroundStyle(PulseColors.textPrimary)
                         Text("SCORE")
-                            .font(.system(size: 10, weight: .semibold)).tracking(1.0)
+                            .font(PulseFont.micro.weight(.semibold)).tracking(1.0)
                             .foregroundStyle(PulseColors.textMuted)
                     }
                 }
@@ -158,9 +158,9 @@ struct SleepTileView: View {
                 Spacer(minLength: 0)
                 VStack(spacing: 6) {
                     Image(systemName: "moon.zzz")
-                        .font(.system(size: 24)).foregroundStyle(PulseColors.sleep.opacity(0.7))
+                        .font(PulseFont.title2.weight(.regular)).foregroundStyle(PulseColors.sleep.opacity(0.7))
                     Text("No sleep recorded")
-                        .font(.system(size: 13, weight: .medium)).foregroundStyle(PulseColors.textPrimary)
+                        .font(PulseFont.footnote).foregroundStyle(PulseColors.textPrimary)
                 }
                 .frame(maxWidth: .infinity)
                 Spacer(minLength: 0)
@@ -202,18 +202,18 @@ struct TodayChartTile: View {
         TodayTile(label: model.title, color: model.accentColor, onTap: onTap) {
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(model.valueText)
-                    .font(.system(size: 26, weight: .semibold)).monospacedDigit()
+                    .font(PulseFont.title).monospacedDigit()
                     .foregroundStyle(PulseColors.textPrimary)
                     .minimumScaleFactor(0.7).lineLimit(1)
                 if let unit = model.unitText {
-                    Text(unit).font(.system(size: 11, weight: .medium)).foregroundStyle(PulseColors.textMuted)
+                    Text(unit).font(PulseFont.caption2).foregroundStyle(PulseColors.textMuted)
                         .lineLimit(1)
                 }
             }
             Spacer(minLength: 0)
             if model.isEmpty {
                 Text(model.statusText)
-                    .font(.system(size: 12)).foregroundStyle(PulseColors.textMuted)
+                    .font(PulseFont.caption.weight(.regular)).foregroundStyle(PulseColors.textMuted)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 ZoneLineChart(
@@ -317,7 +317,7 @@ struct TodayBloodPressureTile: View {
                 lineWidth: 7
             )
             Text(title)
-                .font(.system(size: 10, weight: .semibold)).tracking(0.8)
+                .font(PulseFont.micro.weight(.semibold)).tracking(0.8)
                 .foregroundStyle(PulseColors.textMuted)
         }
         .frame(maxWidth: .infinity)

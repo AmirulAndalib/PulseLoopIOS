@@ -251,13 +251,13 @@ struct CoachSettingsSection: View {
         HStack(alignment: .top, spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(memory.key)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(PulseFont.footnote)
                     .foregroundStyle(PulseColors.textPrimary)
                 Text(memory.value)
-                    .font(.system(size: 12))
+                    .font(PulseFont.caption.weight(.regular))
                     .foregroundStyle(PulseColors.textSecondary)
                 Text(memory.memoryType.replacingOccurrences(of: "_", with: " "))
-                    .font(.system(size: 9, weight: .medium)).tracking(0.6)
+                    .font(PulseFont.nano.weight(.medium)).tracking(0.6)
                     .foregroundStyle(PulseColors.textMuted)
             }
             Spacer(minLength: 8)
@@ -265,7 +265,7 @@ struct CoachSettingsSection: View {
                 modelContext.delete(memory)
                 try? modelContext.save()
             } label: {
-                Image(systemName: "trash").font(.system(size: 14)).foregroundStyle(PulseColors.danger)
+                Image(systemName: "trash").font(PulseFont.subheadline.weight(.regular)).foregroundStyle(PulseColors.danger)
                     .frame(width: 36, height: 36)
             }
             .buttonStyle(.plain)
@@ -300,7 +300,7 @@ struct CoachSettingsSection: View {
                 }
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
-                .font(.system(size: 14).monospaced())
+                .font(PulseFont.subheadline.weight(.regular).monospaced())
                 .foregroundStyle(PulseColors.textPrimary)
                 .padding(.horizontal, 14).padding(.vertical, 10)
                 .background(PulseColors.cardSoft, in: Capsule())
@@ -308,7 +308,7 @@ struct CoachSettingsSection: View {
 
                 Button { showRaw.wrappedValue.toggle() } label: {
                     Image(systemName: showRaw.wrappedValue ? "eye.slash" : "eye")
-                        .font(.system(size: 15))
+                        .font(PulseFont.callout.weight(.regular))
                         .foregroundStyle(PulseColors.textMuted)
                         .frame(width: 40, height: 40)
                 }
@@ -346,16 +346,16 @@ struct CoachSettingsSection: View {
         return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Image(systemName: availability.isAvailable ? "lock.iphone" : "exclamationmark.triangle")
-                    .font(.system(size: 15))
+                    .font(PulseFont.callout.weight(.regular))
                     .foregroundStyle(availability.isAvailable ? PulseColors.accent : PulseColors.danger)
                 Text(availability.isAvailable ? "On-device · private" : "On-device unavailable")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(PulseFont.subheadline.weight(.semibold))
                     .foregroundStyle(PulseColors.textPrimary)
             }
             Text(availability.isAvailable
                  ? "Your health data is analyzed entirely on your iPhone and never leaves the device. No API key, no network — works offline and free of charge."
                  : availability.statusMessage)
-                .font(.system(size: 12))
+                .font(PulseFont.caption.weight(.regular))
                 .foregroundStyle(PulseColors.textSecondary)
             Text("On-device coaching gives summaries, check-ins and chat. Charts, AI actions and web search need a cloud provider.")
                 .font(.caption)
@@ -375,7 +375,7 @@ struct CoachSettingsSection: View {
             TextField("vendor/model-slug", text: modelBinding)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
-                .font(.system(size: 14).monospaced())
+                .font(PulseFont.subheadline.weight(.regular).monospaced())
                 .foregroundStyle(PulseColors.textPrimary)
                 .padding(.horizontal, 14).padding(.vertical, 10)
                 .background(PulseColors.cardSoft, in: Capsule())
@@ -395,7 +395,7 @@ struct CoachSettingsSection: View {
 
     private func labeledRow<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         HStack(spacing: 8) {
-            Text(title).font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textPrimary)
+            Text(title).font(PulseFont.subheadline).foregroundStyle(PulseColors.textPrimary)
                 .fixedSize()
             Spacer(minLength: 8)
             // Let the picker keep its full label and grow the row height if needed,
@@ -412,7 +412,7 @@ struct CoachSettingsSection: View {
 
     private func toggleRow(_ title: String, isOn: Binding<Bool>) -> some View {
         Toggle(isOn: isOn) {
-            Text(title).font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textPrimary)
+            Text(title).font(PulseFont.subheadline).foregroundStyle(PulseColors.textPrimary)
         }
         .tint(PulseColors.accent)
         .padding(.horizontal, 16).padding(.vertical, 6)

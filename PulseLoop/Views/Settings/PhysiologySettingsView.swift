@@ -35,14 +35,14 @@ struct PhysiologySettingsView: View {
                     Toggle("", isOn: $athleteMode).labelsHidden().tint(PulseColors.accent)
                 }
                 Text("Treats a low resting heart rate as a sign of fitness rather than a concern, and relaxes the low-HR threshold.")
-                    .font(.system(size: 12)).foregroundStyle(PulseColors.textMuted)
+                    .font(PulseFont.caption.weight(.regular)).foregroundStyle(PulseColors.textMuted)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 4)
 
                 SectionHeader(title: "Environment", action: nil)
                 numberCard(units == .metric ? "Typical altitude (m)" : "Typical altitude (ft)", text: $altitudeText)
                 Text("Above ~2000 m, normal blood-oxygen readings run lower. We use this to avoid false low-oxygen warnings.")
-                    .font(.system(size: 12)).foregroundStyle(PulseColors.textMuted)
+                    .font(PulseFont.caption.weight(.regular)).foregroundStyle(PulseColors.textMuted)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 4)
 
@@ -50,7 +50,7 @@ struct PhysiologySettingsView: View {
                 triStateCard("Beta-blockers", selection: $betaBlockers)
                 triStateCard("Known lung condition", selection: $lungCondition)
                 Text("Optional. Both can change what's expected for your heart rate or oxygen, so we adjust labels instead of alarming.")
-                    .font(.system(size: 12)).foregroundStyle(PulseColors.textMuted)
+                    .font(PulseFont.caption.weight(.regular)).foregroundStyle(PulseColors.textMuted)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 4)
 
@@ -76,7 +76,7 @@ struct PhysiologySettingsView: View {
 
     private func labeledCard<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         HStack {
-            Text(title).font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textPrimary)
+            Text(title).font(PulseFont.subheadline).foregroundStyle(PulseColors.textPrimary)
             Spacer()
             content()
         }
@@ -88,7 +88,7 @@ struct PhysiologySettingsView: View {
 
     private func numberCard(_ title: String, text: Binding<String>) -> some View {
         HStack {
-            Text(title).font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textPrimary)
+            Text(title).font(PulseFont.subheadline).foregroundStyle(PulseColors.textPrimary)
             Spacer()
             TextField("0", text: text)
                 .keyboardType(.numberPad)

@@ -15,7 +15,7 @@ struct CapabilityChips: View {
         let row = HStack(spacing: 6) {
             ForEach(chips, id: \.self) { chip in
                 Text(chip)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(PulseFont.caption2)
                     .foregroundStyle(ChipTone.neutral.foreground)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)

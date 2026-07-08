@@ -36,7 +36,7 @@ struct SettingsSection: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text(title)
                     .textCase(.uppercase)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(PulseFont.footnote.weight(.semibold))
                     .tracking(1.0)
                     .foregroundStyle(PulseColors.textSecondary)
                     .padding(.leading, 16)
@@ -75,7 +75,7 @@ struct SettingsRow: View {
         Button(action: item.action) {
             HStack(spacing: 14) {
                 Image(systemName: item.icon)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(PulseFont.callout.weight(.semibold))
                     .foregroundStyle(.white)
                     .frame(width: 34, height: 34)
                     // Neutral "white glass" tile (iOS Settings look): a light translucent
@@ -94,20 +94,20 @@ struct SettingsRow: View {
                     )
 
                 Text(item.title)
-                    .font(.system(size: 16))
+                    .font(PulseFont.body)
                     .foregroundStyle(PulseColors.textPrimary)
 
                 Spacer(minLength: 8)
 
                 if let trailingValue = item.trailingValue {
                     Text(trailingValue)
-                        .font(.system(size: 14))
+                        .font(PulseFont.subheadline.weight(.regular))
                         .foregroundStyle(PulseColors.textSecondary)
                         .lineLimit(1)
                 }
 
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(PulseFont.footnote.weight(.semibold))
                     .foregroundStyle(PulseColors.textMuted)
             }
             .padding(.horizontal, 16)

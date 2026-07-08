@@ -10,7 +10,7 @@ struct ProfileEditorView: View {
             formCard {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Measurement units")
-                        .font(.system(size: 14, weight: .medium))
+                        .font(PulseFont.subheadline)
                         .foregroundStyle(PulseColors.textPrimary)
                     Picker("Measurement units", selection: $draft.units) {
                         ForEach(UnitsPreference.allCases, id: \.self) { units in
@@ -26,7 +26,7 @@ struct ProfileEditorView: View {
                 VStack(spacing: 0) {
                     HStack(spacing: 12) {
                         Text("Name")
-                            .font(.system(size: 14, weight: .medium))
+                            .font(PulseFont.subheadline)
                             .foregroundStyle(PulseColors.textPrimary)
                         Spacer()
                         TextField("Optional", text: $draft.name)
@@ -40,7 +40,7 @@ struct ProfileEditorView: View {
 
                     HStack(spacing: 12) {
                         Text("Sex")
-                            .font(.system(size: 14, weight: .medium))
+                            .font(PulseFont.subheadline)
                             .foregroundStyle(PulseColors.textPrimary)
                         Spacer(minLength: 8)
                         Picker("Sex", selection: $draft.sex) {
@@ -114,14 +114,14 @@ struct ProfileEditorView: View {
         } label: {
             HStack(spacing: 12) {
                 Text(title)
-                    .font(.system(size: 14, weight: .medium))
+                    .font(PulseFont.subheadline)
                     .foregroundStyle(PulseColors.textPrimary)
                 Spacer()
                 Text(value ?? "Not set")
-                    .font(.system(size: 14))
+                    .font(PulseFont.subheadline.weight(.regular))
                     .foregroundStyle(value == nil ? PulseColors.textMuted : PulseColors.textSecondary)
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(PulseFont.caption2.weight(.semibold))
                     .foregroundStyle(PulseColors.textMuted)
             }
             .frame(minHeight: 50)
@@ -200,13 +200,13 @@ private struct DecimalValueSheet: View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Enter your weight in \(unit)")
-                    .font(.system(size: 14, weight: .medium))
+                    .font(PulseFont.subheadline)
                     .foregroundStyle(PulseColors.textPrimary)
 
                 TextField(LocalizedDecimalInput.format(70.5), text: $text)
                     .keyboardType(.decimalPad)
                     .focused($fieldFocused)
-                    .font(.system(size: 22, weight: .semibold, design: .rounded))
+                    .font(PulseFont.numberL)
                     .padding(14)
                     .background(PulseColors.card, in: RoundedRectangle(cornerRadius: 14))
                     .overlay(

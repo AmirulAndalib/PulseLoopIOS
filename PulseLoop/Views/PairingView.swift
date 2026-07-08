@@ -107,7 +107,7 @@ struct PairingView: View {
                 HStack {
                     Button { dismiss() } label: {
                         Image(systemName: "chevron.left")
-                            .font(.system(size: 16, weight: .semibold))
+                            .font(PulseFont.bodyEmphasis)
                             .foregroundStyle(PulseColors.textPrimary)
                             .frame(width: 36, height: 36)
                             .pulseGlass(Circle(), interactive: true)
@@ -182,7 +182,7 @@ struct PairingView: View {
                     VStack(spacing: 16) {
                         RingArtView(tint: model.tint, imageName: model.imageName)
                         Text(model.displayName)
-                            .font(.system(size: 22, weight: .semibold, design: .rounded))
+                            .font(PulseFont.numberL)
                             .foregroundStyle(PulseColors.textPrimary)
                         CapabilityChips(blurb: model.blurb) // §2 replaces blurb Text
                     }
@@ -247,7 +247,7 @@ struct PairingView: View {
                     if isLooking { ble.startScanning() }
                 } label: {
                     Text(brand)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(PulseFont.subheadline.weight(.semibold))
                         .foregroundStyle(isSelected ? .white : PulseColors.textSecondary)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)
@@ -285,7 +285,7 @@ struct PairingView: View {
             if let onSkip {
                 SecondaryButton(title: "Skip for now", systemImage: "arrow.right", action: onSkip)
                 Text("You can pair a ring later from Settings.")
-                    .font(.system(size: 12))
+                    .font(PulseFont.caption.weight(.regular))
                     .foregroundStyle(PulseColors.textMuted)
                     .multilineTextAlignment(.center)
             }
@@ -418,7 +418,7 @@ struct PairingView: View {
     private var bluetoothOffCard: some View {
         VStack(spacing: 14) { // §6 spacing bumped to 14
             Image(systemName: "antenna.radiowaves.left.and.right.slash")
-                .font(.system(size: 34))
+                .font(PulseFont.largeTitle.weight(.regular))
                 .foregroundStyle(PulseColors.textMuted)
             Text("Bluetooth is off")
                 .font(.headline)

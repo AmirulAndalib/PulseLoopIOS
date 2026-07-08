@@ -168,21 +168,21 @@ struct MetricTile: View {
                 HStack(spacing: 8) {
                     Circle().fill(color).frame(width: 8, height: 8)
                     Text(title.uppercased())
-                        .font(.system(size: 11, weight: .medium))
+                        .font(PulseFont.caption2)
                         .foregroundStyle(PulseColors.textMuted)
                         .lineLimit(1)
                 }
                 
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
                     Text(value)
-                        .font(.system(size: 30, weight: .semibold, design: .rounded))
+                        .font(PulseFont.numberXL)
                         .monospacedDigit()
                         .foregroundStyle(PulseColors.textPrimary)
                         .minimumScaleFactor(0.75)
                         .lineLimit(1)
                     if let unit {
                         Text(unit)
-                            .font(.system(size: 12, weight: .medium))
+                            .font(PulseFont.caption)
                             .foregroundStyle(PulseColors.textMuted)
                     }
                 }
@@ -229,7 +229,7 @@ struct PrimaryButton: View {
     private var label: some View {
         Label(title, systemImage: systemImage ?? "arrow.right")
             .labelStyle(.titleAndIcon)
-            .font(.system(size: 16, weight: .semibold))
+            .font(PulseFont.bodyEmphasis)
             .frame(maxWidth: .infinity)
             .frame(height: 56)
     }
@@ -263,7 +263,7 @@ struct SecondaryButton: View {
 
     private var label: some View {
         Label(title, systemImage: systemImage ?? "circle")
-            .font(.system(size: 15, weight: .semibold))
+            .font(PulseFont.callout.weight(.semibold))
             .frame(maxWidth: .infinity)
             .frame(height: 52)
     }

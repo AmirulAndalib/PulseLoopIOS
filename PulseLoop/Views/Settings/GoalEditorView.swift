@@ -82,16 +82,16 @@ struct GoalEditorView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
                 Image(systemName: spec.icon)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(PulseFont.subheadline.weight(.semibold))
                     .foregroundStyle(spec.tint)
                     .frame(width: 30, height: 30)
                     .background(spec.tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
                 Text(spec.title)
-                    .font(.system(size: 15, weight: .medium))
+                    .font(PulseFont.callout)
                     .foregroundStyle(PulseColors.textPrimary)
                 Spacer()
                 Text(label)
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(PulseFont.bodyEmphasis)
                     .monospacedDigit()
                     .foregroundStyle(spec.tint)
             }

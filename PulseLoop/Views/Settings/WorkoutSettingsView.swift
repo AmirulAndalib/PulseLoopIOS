@@ -16,7 +16,7 @@ struct WorkoutSettingsView: View {
                 SectionHeader(title: "Sensors during workouts", action: nil)
                 Text("Choose which sensors the ring reads while a workout is recording, and how often. "
                      + "More frequent reads give finer detail but use more battery.")
-                    .font(.system(size: 12))
+                    .font(PulseFont.caption.weight(.regular))
                     .foregroundStyle(PulseColors.textMuted)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -102,7 +102,7 @@ struct WorkoutSettingsView: View {
 
     private func labeledRow<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         HStack {
-            Text(title).font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textPrimary)
+            Text(title).font(PulseFont.subheadline).foregroundStyle(PulseColors.textPrimary)
             Spacer()
             content()
         }
@@ -114,7 +114,7 @@ struct WorkoutSettingsView: View {
 
     private func toggleRow(_ title: String, isOn: Binding<Bool>) -> some View {
         Toggle(isOn: isOn) {
-            Text(title).font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textPrimary)
+            Text(title).font(PulseFont.subheadline).foregroundStyle(PulseColors.textPrimary)
         }
         .tint(PulseColors.accent)
         .padding(.horizontal, 16).padding(.vertical, 8)

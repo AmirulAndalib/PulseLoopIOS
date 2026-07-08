@@ -50,10 +50,10 @@ struct HeroInsightCardView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(title)
-                .font(.system(size: 28, weight: .semibold))
+                .font(PulseFont.title)
                 .foregroundStyle(PulseColors.textPrimary)
             Text(summary)
-                .font(.system(size: 15))
+                .font(PulseFont.callout.weight(.regular))
                 .lineSpacing(4)
                 .foregroundStyle(PulseColors.textSecondary)
                 .padding(.top, 8)
@@ -81,7 +81,7 @@ private struct FlowChips: View {
         HStack(spacing: 6) {
             ForEach(chips) { chip in
                 Text(chip.label)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(PulseFont.caption)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
                     .foregroundStyle(chip.tone.foreground)
@@ -112,16 +112,16 @@ struct CoachMessageCard: View {
                 Circle().fill(PulseColors.accent).frame(width: 6, height: 6)
                     .shadow(color: PulseColors.accent.opacity(0.8), radius: 5)
                 Text("COACH")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(PulseFont.micro)
                     .tracking(1.8)
                     .foregroundStyle(PulseColors.textMuted)
             }
             Text(headline)
-                .font(.system(size: 14, weight: .semibold))
+                .font(PulseFont.subheadline.weight(.semibold))
                 .foregroundStyle(PulseColors.textPrimary)
                 .padding(.top, 6)
             Text(bodyText)
-                .font(.system(size: 14))
+                .font(PulseFont.subheadline.weight(.regular))
                 .lineSpacing(5)
                 .foregroundStyle(PulseColors.textSecondary)
                 .padding(.top, 6)
@@ -129,7 +129,7 @@ struct CoachMessageCard: View {
                 HStack(spacing: 8) {
                     ForEach(chips, id: \.self) { chip in
                         Text(chip)
-                            .font(.system(size: 11))
+                            .font(PulseFont.caption2.weight(.regular))
                             .padding(.horizontal, 10)
                             .padding(.vertical, 5)
                             .foregroundStyle(PulseColors.textSecondary)
@@ -180,20 +180,20 @@ struct MetricCardButton: View {
                     Circle().fill(color).frame(width: 8, height: 8)
                         .shadow(color: color.opacity(0.7), radius: 5)
                     Text(label.uppercased())
-                        .font(.system(size: 11, weight: .medium))
+                        .font(PulseFont.caption2)
                         .tracking(0.6)
                         .foregroundStyle(PulseColors.textMuted)
                         .lineLimit(1)
                 }
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
                     Text(value)
-                        .font(.system(size: 30, weight: .semibold))
+                        .font(PulseFont.greeting)
                         .monospacedDigit()
                         .foregroundStyle(PulseColors.textPrimary)
                         .minimumScaleFactor(0.7)
                         .lineLimit(1)
                     if let unit {
-                        Text(unit).font(.system(size: 12, weight: .medium)).foregroundStyle(PulseColors.textMuted)
+                        Text(unit).font(PulseFont.caption).foregroundStyle(PulseColors.textMuted)
                     }
                 }
                 if let delta {
@@ -203,7 +203,7 @@ struct MetricCardButton: View {
                         Text("\(isUp ? "+" : "")\(delta.value)").monospacedDigit()
                         Text(delta.label).foregroundStyle(PulseColors.textMuted)
                     }
-                    .font(.system(size: 11, weight: .medium))
+                    .font(PulseFont.caption2)
                     .foregroundStyle(isUp ? PulseColors.success : PulseColors.danger)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
@@ -241,7 +241,7 @@ struct RangeToggleView: View {
                 let active = selection == option.0
                 Button { selection = option.0 } label: {
                     Text(option.1)
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(PulseFont.micro.weight(.semibold))
                         .tracking(0.8)
                         .foregroundStyle(active ? PulseColors.textPrimary : PulseColors.textMuted)
                         .frame(minWidth: 28)
@@ -320,12 +320,12 @@ struct WeeklyPillCalendarView: View {
                     ZStack {
                         Capsule().fill(fill(day)).overlay(Capsule().stroke(border(day), lineWidth: 1))
                         Text(day.completed ? "✓" : day.isToday ? "•" : "")
-                            .font(.system(size: 10, weight: .medium))
+                            .font(PulseFont.micro)
                             .foregroundStyle(textColor(day))
                     }
                     .frame(width: 24, height: 40)
                     Text(day.label)
-                        .font(.system(size: 10, weight: .medium))
+                        .font(PulseFont.micro)
                         .tracking(0.5)
                         .foregroundStyle(day.isToday ? PulseColors.textPrimary : PulseColors.textMuted)
                 }
@@ -365,7 +365,7 @@ struct SleepHeroCardView: View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 0) {
                 Text(label.uppercased())
-                    .font(.system(size: 11, weight: .medium))
+                    .font(PulseFont.caption2)
                     .tracking(1.8)
                     .foregroundStyle(PulseColors.textMuted)
                 Text(value)
@@ -375,7 +375,7 @@ struct SleepHeroCardView: View {
                     .padding(.top, 4)
                 if let support {
                     Text(support)
-                        .font(.system(size: 14).monospacedDigit())
+                        .font(PulseFont.subheadline.weight(.regular).monospacedDigit())
                         .foregroundStyle(PulseColors.textSecondary)
                         .padding(.top, 8)
                 }
@@ -383,12 +383,12 @@ struct SleepHeroCardView: View {
             Spacer(minLength: 8)
             VStack(alignment: .trailing, spacing: 4) {
                 Text(score.map { "\($0)" } ?? "—")
-                    .font(.system(size: 40, weight: .semibold))
+                    .font(PulseFont.largeTitle)
                     .monospacedDigit()
                     .foregroundStyle(Color(hex: "#8B7CFF"))
                 if let scoreLabel, score != nil {
                     Text(scoreLabel)
-                        .font(.system(size: 14, weight: .medium))
+                        .font(PulseFont.subheadline)
                         .foregroundStyle(PulseColors.textPrimary)
                 }
             }
@@ -424,13 +424,13 @@ struct SleepStageSummaryCardsView: View {
             HStack(spacing: 8) {
                 Circle().fill(color).frame(width: 8, height: 8).shadow(color: color.opacity(0.7), radius: 5)
                 Text(label.uppercased())
-                    .font(.system(size: 10, weight: .medium))
+                    .font(PulseFont.micro)
                     .tracking(0.6)
                     .foregroundStyle(PulseColors.textMuted)
                     .lineLimit(1)
             }
             Text(value)
-                .font(.system(size: 22, weight: .semibold))
+                .font(PulseFont.title2)
                 .monospacedDigit()
                 .foregroundStyle(PulseColors.textPrimary)
                 .padding(.top, 12)
@@ -455,7 +455,7 @@ struct DetailCard<Content: View>: View {
             HStack(spacing: 8) {
                 Circle().fill(color).frame(width: 8, height: 8).shadow(color: color.opacity(0.7), radius: 5)
                 Text(title.uppercased())
-                    .font(.system(size: 11, weight: .medium))
+                    .font(PulseFont.caption2)
                     .tracking(1.0)
                     .foregroundStyle(PulseColors.textMuted)
             }
@@ -478,7 +478,7 @@ struct QuickActionButton: View {
 
     private var text: some View {
         Text(label)
-            .font(.system(size: 14, weight: .semibold))
+            .font(PulseFont.subheadline.weight(.semibold))
             .frame(maxWidth: .infinity)
             .padding(.vertical, 10)
     }
@@ -529,7 +529,7 @@ struct ActivitySectionCard<Content: View>: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text(title.uppercased())
-                    .font(.system(size: 11, weight: .medium))
+                    .font(PulseFont.caption2)
                     .tracking(1.0)
                     .foregroundStyle(PulseColors.textMuted)
                 Spacer()
@@ -630,7 +630,7 @@ struct ActivityWorkoutRow: View {
         Button { onTap?() } label: {
             HStack(spacing: 12) {
                 Image(systemName: ActivityMeta.icon(session.type))
-                    .font(.system(size: 18))
+                    .font(PulseFont.title3.weight(.regular))
                     .foregroundStyle(PulseColors.accent)
                     .frame(width: 44, height: 44)
                     .background(PulseColors.accentSoft)
@@ -638,27 +638,27 @@ struct ActivityWorkoutRow: View {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack {
                         Text(ActivityMeta.label(session.type))
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(PulseFont.subheadline.weight(.semibold))
                             .foregroundStyle(PulseColors.textPrimary)
                         Spacer()
                         Text(SleepFormat.clockTime(session.startedAt))
-                            .font(.system(size: 11).monospacedDigit())
+                            .font(PulseFont.caption2.weight(.regular).monospacedDigit())
                             .foregroundStyle(PulseColors.textMuted)
                     }
                     HStack(spacing: 12) {
-                        Text(durationLabel).font(.system(size: 12).monospacedDigit())
+                        Text(durationLabel).font(PulseFont.caption.weight(.regular).monospacedDigit())
                         if let distance = session.distanceMeters {
                             let d = UnitsFormatter.distance(meters: distance, units: units)
-                            Text("\(d.value) \(d.unit)").font(.system(size: 12).monospacedDigit())
+                            Text("\(d.value) \(d.unit)").font(PulseFont.caption.weight(.regular).monospacedDigit())
                         }
                         if let hr = session.avgHeartRate {
-                            Text("\(Int(hr)) bpm avg").font(.system(size: 12).monospacedDigit())
+                            Text("\(Int(hr)) bpm avg").font(PulseFont.caption.weight(.regular).monospacedDigit())
                         }
                     }
                     .foregroundStyle(PulseColors.textMuted)
                 }
                 if session.useGps {
-                    Image(systemName: "map").font(.system(size: 14)).foregroundStyle(PulseColors.textMuted)
+                    Image(systemName: "map").font(PulseFont.subheadline.weight(.regular)).foregroundStyle(PulseColors.textMuted)
                 }
             }
             .padding(16)

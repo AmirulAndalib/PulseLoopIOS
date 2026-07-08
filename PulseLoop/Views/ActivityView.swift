@@ -42,7 +42,7 @@ struct ActivityView: View {
                 HStack(spacing: 12) {
                     Button { path.append(AppRoute.recordSelect) } label: {
                         Text("+ Record Activity")
-                            .font(.system(size: 17, weight: .semibold))
+                            .font(PulseFont.headline)
                             .frame(maxWidth: .infinity)
                             .frame(height: 60)
                             .foregroundStyle(.white)
@@ -53,7 +53,7 @@ struct ActivityView: View {
 
                     Button { historyOpen = true } label: {
                         Image(systemName: "calendar")
-                            .font(.system(size: 18))
+                            .font(PulseFont.title3.weight(.regular))
                             .foregroundStyle(PulseColors.textSecondary)
                             .frame(width: 60, height: 60)
                             // Glass circle, matching the pushed-page back button.
@@ -65,21 +65,21 @@ struct ActivityView: View {
                 Button { path.append(AppRoute.logPastActivity) } label: {
                     HStack(spacing: 12) {
                         Image(systemName: "clock.arrow.circlepath")
-                            .font(.system(size: 18, weight: .semibold))
+                            .font(PulseFont.title3)
                             .foregroundStyle(PulseColors.accent)
                             .frame(width: 40, height: 40)
                             .background(PulseColors.accentSoft, in: Circle())
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Log Past Activity")
-                                .font(.system(size: 16, weight: .semibold))
+                                .font(PulseFont.bodyEmphasis)
                                 .foregroundStyle(PulseColors.textPrimary)
                             Text("Add a workout you forgot to record")
-                                .font(.system(size: 12))
+                                .font(PulseFont.caption.weight(.regular))
                                 .foregroundStyle(PulseColors.textMuted)
                         }
                         Spacer()
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(PulseFont.footnote.weight(.semibold))
                             .foregroundStyle(PulseColors.textMuted)
                     }
                     .padding(.horizontal, 16)
@@ -93,13 +93,13 @@ struct ActivityView: View {
 
                 // Today's workouts
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("TODAY").font(.system(size: 11, weight: .medium)).tracking(1.4)
+                    Text("TODAY").font(PulseFont.caption2).tracking(1.4)
                         .foregroundStyle(PulseColors.textMuted)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     if todayWorkouts.isEmpty {
                         VStack(spacing: 4) {
-                            Text("No workouts recorded today").font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textPrimary)
-                            Text("Start one manually when your ring misses an activity.").font(.system(size: 12)).foregroundStyle(PulseColors.textMuted)
+                            Text("No workouts recorded today").font(PulseFont.subheadline).foregroundStyle(PulseColors.textPrimary)
+                            Text("Start one manually when your ring misses an activity.").font(PulseFont.caption.weight(.regular)).foregroundStyle(PulseColors.textMuted)
                         }
                         .frame(maxWidth: .infinity).padding(.vertical, 20)
                         .background(PulseColors.card).clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
@@ -117,18 +117,18 @@ struct ActivityView: View {
                         HStack(spacing: 16) {
                             ProgressRingView(value: Double(summary.activeMinutes ?? 0), max: Double(activeGoal), color: PulseColors.steps) {
                                 VStack(spacing: 0) {
-                                    Text("\(summary.activeMinutes ?? 0)").font(.system(size: 20, weight: .semibold)).monospacedDigit().foregroundStyle(PulseColors.textPrimary)
-                                    Text("MIN").font(.system(size: 10, weight: .medium)).tracking(1.0).foregroundStyle(PulseColors.textMuted)
+                                    Text("\(summary.activeMinutes ?? 0)").font(PulseFont.title3).monospacedDigit().foregroundStyle(PulseColors.textPrimary)
+                                    Text("MIN").font(PulseFont.micro).tracking(1.0).foregroundStyle(PulseColors.textMuted)
                                 }
                             }
                             VStack(alignment: .leading, spacing: 4) {
-                                Text("WEEKLY GOAL").font(.system(size: 11, weight: .medium)).tracking(1.4).foregroundStyle(PulseColors.textMuted)
-                                Text("\(activeDayCount) of 7 active days").font(.system(size: 16)).foregroundStyle(PulseColors.textPrimary)
+                                Text("WEEKLY GOAL").font(PulseFont.caption2).tracking(1.4).foregroundStyle(PulseColors.textMuted)
+                                Text("\(activeDayCount) of 7 active days").font(PulseFont.body).foregroundStyle(PulseColors.textPrimary)
                             }
                             Spacer(minLength: 0)
                         }
                         WeeklyPillCalendarView(days: days)
-                        Text("TAP TO EDIT GOALS").font(.system(size: 10, weight: .medium)).tracking(1.0).foregroundStyle(PulseColors.textMuted)
+                        Text("TAP TO EDIT GOALS").font(PulseFont.micro).tracking(1.0).foregroundStyle(PulseColors.textMuted)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(16)
@@ -234,18 +234,18 @@ struct DailyActivitySummaryCard: View {
     private func metric(label: String, value: String, unit: String?, color: Color) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(label.uppercased())
-                .font(.system(size: 15, weight: .bold)).tracking(0.6)
+                .font(PulseFont.callout.weight(.bold)).tracking(0.6)
                 .foregroundStyle(color)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(value)
-                    .font(.system(size: 32, weight: .semibold)).monospacedDigit()
+                    .font(PulseFont.greeting).monospacedDigit()
                     .foregroundStyle(PulseColors.textPrimary)
                     .minimumScaleFactor(0.6)
                     .lineLimit(1)
                 if let unit {
-                    Text(unit).font(.system(size: 14, weight: .medium)).foregroundStyle(PulseColors.textMuted)
+                    Text(unit).font(PulseFont.subheadline).foregroundStyle(PulseColors.textMuted)
                 }
             }
         }
