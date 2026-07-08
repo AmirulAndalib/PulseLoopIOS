@@ -20,6 +20,7 @@ struct CoachResponseView: View {
                     .font(PulseFont.subheadline.weight(.regular))
                     .lineSpacing(4)
                     .foregroundStyle(PulseColors.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             if !response.bullets.isEmpty {
@@ -94,6 +95,7 @@ struct CoachResponseView: View {
         HStack(alignment: .top, spacing: 6) {
             Image(systemName: icon).font(PulseFont.caption2.weight(.regular)).foregroundStyle(tone)
             Text(coachMarkdown: text).font(PulseFont.caption.weight(.regular)).foregroundStyle(tone)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(10)

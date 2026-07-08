@@ -98,13 +98,7 @@ struct ActivityTileView: View {
                                 .tracking(0.8)
                                 .foregroundStyle(value.color)
                             Text(value.text)
-                                .font(PulseFont.title)
-                                .monospacedDigit()
-                                .foregroundStyle(PulseColors.textPrimary)
-                                // Let long values (e.g. "8,401") shrink to fit the
-                                // narrow legend column instead of truncating to "8,4…".
-                                .minimumScaleFactor(0.5)
-                                .lineLimit(1)
+                                .activityValueStyle(size: 26)
                         }
                     }
                 }

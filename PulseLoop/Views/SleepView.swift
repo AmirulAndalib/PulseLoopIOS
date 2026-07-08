@@ -75,8 +75,7 @@ struct SleepView: View {
         if let night = SleepInsights.validSessions(summary.sessions).last {
             let score = SleepScore.calculate(night)
             let coach = SleepInsights.dayCoach(night, score: score.score, awakePct: score.awakePct, deepPct: score.deepPct, activitySteps: activitySteps)
-            // Coach card sits at the top, in line with the Today tab.
-            summaryCard(daySummary, fallback: coach)
+            // Hero card opens the page; coach card closes it.
             SleepHeroCardView(
                 label: SleepInsights.rangeHeroLabel[.day] ?? "Last Sleep",
                 value: SleepFormat.duration(night.session.totalMinutes),
@@ -92,17 +91,18 @@ struct SleepView: View {
                 light: SleepFormat.duration(night.lightMinutes),
                 awake: SleepFormat.duration(night.awakeMinutes)
             )
+            summaryCard(daySummary, fallback: coach)
         } else {
             let noData = SleepInsights.noDataState(.day)
-            if coachEnabled {
-                CoachMessageCard(headline: SleepInsights.dayNoDataCoach.headline, body: SleepInsights.dayNoDataCoach.body, chips: SleepInsights.dayNoDataCoach.chips)
-            }
             SleepHeroCardView(label: noData.label, value: noData.value, support: noData.support, score: nil, noData: true)
             VisualizationCard(eyebrow: "Stages", title: "Sleep architecture", legend: false) {
                 InlineEmptyState(title: "No sleep recorded", message: "Wear your ring overnight to see your hypnogram here.")
                     .frame(height: 180)
             }
             SleepStageSummaryCardsView(deep: "—", light: "—", awake: "—")
+            if coachEnabled {
+                CoachMessageCard(headline: SleepInsights.dayNoDataCoach.headline, body: SleepInsights.dayNoDataCoach.body, chips: SleepInsights.dayNoDataCoach.chips)
+            }
         }
     }
 
@@ -125,8 +125,7 @@ struct SleepView: View {
             : SleepInsights.buildNightAxis(start: summary.start, end: summary.end, sessions: summary.sessions, range: range)
         let vizTitle = range == .year ? "Monthly average" : "Nightly sleep"
 
-        // Coach card sits at the top, in line with the Today tab.
-        summaryCard(rangeSummary(range), fallback: coach)
+        // Hero card opens the page; coach card closes it.
         SleepHeroCardView(
             label: SleepInsights.rangeHeroLabel[range] ?? "Sleep",
             value: enough ? SleepFormat.duration(avgMin) : noData.value,
@@ -144,6 +143,7 @@ struct SleepView: View {
             light: stageAvg.map { SleepFormat.duration($0.light) } ?? "—",
             awake: stageAvg.map { SleepFormat.duration($0.awake) } ?? "—"
         )
+        summaryCard(rangeSummary(range), fallback: coach)
     }
 }
 
