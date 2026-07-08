@@ -38,25 +38,38 @@ struct TodayView: View {
         let coachSummary = todaySummaries.first { $0.scopeKey == CoachDataAccess.localDateString(Date()) }
         return AnyView(ScrollView {
             VStack(spacing: 16) {
-                HeroInsightCardView(title: hero.title, summary: hero.summary, chips: hero.chips)
-
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                    tiles(activeStore)
-                }
-
-                if coachEnabled {
+                // Top insight card. When the coach is on it owns this slot (tap → chat);
+                // otherwise the deterministic hero fills it. Only ever one card here, so the
+                // coach summary and the hero can't render the same content twice on one screen.
+                if coachEnabled, let coachSummary {
                     Button {
-                        if let coachSummary { summaryService.openInChat(coachSummary) } else { selectedTab = .coach }
+                        summaryService.openInChat(coachSummary)
                     } label: {
                         CoachMessageCard(
-                            headline: coachSummary?.title ?? (summary.calibration.isCalibrating ? "Baseline in progress" : "Want a recap?"),
-                            body: coachSummary?.body ?? (summary.calibration.isCalibrating
-                                ? "I can help explain what data is collected and what is still missing."
-                                : "Want a summary from the latest ring context? Tap to open the coach."),
-                            chips: coachSummary?.chips ?? []
+                            headline: coachSummary.title,
+                            body: coachSummary.body,
+                            chips: coachSummary.chips
                         )
                     }
                     .buttonStyle(.plain)
+                } else if coachEnabled {
+                    // Coach on but no summary generated yet: offer the chat entry point.
+                    Button { selectedTab = .coach } label: {
+                        CoachMessageCard(
+                            headline: summary.calibration.isCalibrating ? "Baseline in progress" : "Want a recap?",
+                            body: summary.calibration.isCalibrating
+                                ? "I can help explain what data is collected and what is still missing."
+                                : "Want a summary from the latest ring context? Tap to open the coach.",
+                            chips: []
+                        )
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    HeroInsightCardView(title: hero.title, summary: hero.summary, chips: hero.chips)
+                }
+
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                    tiles(activeStore)
                 }
             }
             .padding(.horizontal, 16)
