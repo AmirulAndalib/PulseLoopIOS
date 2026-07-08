@@ -10,6 +10,7 @@ struct MetricDetailView: View {
     let metric: MetricKind
     @Binding var path: NavigationPath
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
     @Query private var profiles: [UserProfile]
 
     @State private var period: DetailPeriod = .today
@@ -73,8 +74,9 @@ struct MetricDetailView: View {
             .padding(.bottom, 40)
         }
         .background(PulseColors.background)
-        .navigationTitle(metric.title)
-        .navigationBarTitleDisplayMode(.inline)
+        // Shared glass chrome: centered title + glass back button, no system nav
+        // bar (so the zoom transition doesn't reflow the content).
+        .pageChrome(metric.title)
         .task(id: period) { reload() }
     }
 

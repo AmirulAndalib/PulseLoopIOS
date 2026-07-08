@@ -8,6 +8,7 @@ struct VitalsView: View {
     let isActive: Bool
     @Environment(\.modelContext) private var modelContext
     @Environment(RingSyncCoordinator.self) private var coordinator
+    @Environment(\.zoomNamespace) private var zoomNS
     @Query private var profiles: [UserProfile]
     @State private var measuring: MeasurementSheet.Kind?
     @State private var dataChange = PulseDataChange.shared
@@ -106,6 +107,7 @@ struct VitalsView: View {
         if let model = card(store, metric) {
             let baseline = metric == .hrv ? BaselineStats.compute(store.hrvSamples) : nil
             VitalChartCard(model: model, profile: physiology, baseline: baseline, showPoints: showPoints) { open(metric) }
+                .pulseZoomSource(AppRoute.metricDetail(metric), in: zoomNS)
         }
     }
 
@@ -120,6 +122,7 @@ struct VitalsView: View {
                 diastolicZones: VitalsThresholdEngine.diastolicReferenceZones(),
                 onTap: { open(.bloodPressure) }
             )
+            .pulseZoomSource(AppRoute.metricDetail(.bloodPressure), in: zoomNS)
         }
     }
 

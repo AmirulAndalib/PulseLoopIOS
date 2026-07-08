@@ -30,3 +30,43 @@ extension ButtonStyle where Self == PulseTapStyle {
     /// `.buttonStyle(.pulseTap)` — consistent press-scale for cards/controls.
     static var pulseTap: PulseTapStyle { PulseTapStyle() }
 }
+
+// MARK: - Zoom navigation transitions (iOS 18+)
+
+/// Shared zoom-transition namespace, published from the NavigationStack root so
+/// source cards (deep in child views) and their pushed destinations can match.
+private struct ZoomNamespaceKey: EnvironmentKey {
+    static let defaultValue: Namespace.ID? = nil
+}
+
+extension EnvironmentValues {
+    var zoomNamespace: Namespace.ID? {
+        get { self[ZoomNamespaceKey.self] }
+        set { self[ZoomNamespaceKey.self] = newValue }
+    }
+}
+
+extension View {
+    /// Marks this card as the source of a zoom navigation transition. No-op until
+    /// a `zoomNamespace` is published into the environment. Only wire a source when
+    /// the matching destination also opts in, or the transition degrades badly.
+    @ViewBuilder
+    func pulseZoomSource(_ id: AnyHashable?, in namespace: Namespace.ID?) -> some View {
+        if let id, let namespace {
+            self.matchedTransitionSource(id: id, in: namespace)
+        } else {
+            self
+        }
+    }
+
+    /// Zooms this pushed destination out of the matching source card. Only apply
+    /// when a matching `pulseZoomSource` exists — a sourceless zoom glitches.
+    @ViewBuilder
+    func pulseZoomDestination(_ id: AnyHashable, in namespace: Namespace.ID?) -> some View {
+        if let namespace {
+            self.navigationTransition(.zoom(sourceID: id, in: namespace))
+        } else {
+            self
+        }
+    }
+}

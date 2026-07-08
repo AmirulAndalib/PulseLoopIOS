@@ -18,6 +18,8 @@ struct RootAppView: View {
         #endif
     }
 
+    @Namespace private var zoomNS
+
     var body: some View {
         NavigationStack(path: $path) {
             Group {
@@ -31,6 +33,7 @@ struct RootAppView: View {
                 }
             }
             .background(PulseColors.background.ignoresSafeArea())
+            .environment(\.zoomNamespace, zoomNS)
             // Demo data is opt-in: load it from Settings → "Reseed demo data", or via the
             // `-seedDemo YES` launch arg (test tooling only). Normal launches start empty.
             .task {
@@ -68,6 +71,7 @@ struct RootAppView: View {
                     ActivityDetailView(sessionId: id)
                 case let .metricDetail(metric):
                     MetricDetailView(metric: metric, path: $path)
+                        .pulseZoomDestination(route, in: zoomNS)
                 case .activityTrends:
                     ActivityTrendsView(path: $path)
                 case .recordSelect:
@@ -261,6 +265,8 @@ struct AppHeader: View {
             ConnectionStatusPill(state: effectiveState, batteryPercent: effectiveBattery)
                 .font(.system(size: 17))
                 .foregroundStyle(PulseColors.textSecondary)
+                // Tap the status pill → Wearable settings (add-a-ring / status).
+                .onTapGesture { path.append(AppRoute.settingsWearable) }
         }
         .padding(.horizontal, 20)
         .padding(.top, 8)

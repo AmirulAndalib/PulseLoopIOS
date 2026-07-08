@@ -4,6 +4,7 @@ import SwiftData
 struct TodayView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(RingSyncCoordinator.self) private var coordinator
+    @Environment(\.zoomNamespace) private var zoomNS
     @Query(filter: #Predicate<CoachSummary> { $0.kind == "today" }, sort: \CoachSummary.updatedAt, order: .reverse)
     private var todaySummaries: [CoachSummary]
     @Query private var profiles: [UserProfile]
@@ -135,6 +136,7 @@ struct TodayView: View {
             TodayChartTile(model: model, profile: physiology, baseline: baseline, showPoints: showPoints) {
                 path.append(AppRoute.metricDetail(metric))
             }
+            .pulseZoomSource(AppRoute.metricDetail(metric), in: zoomNS)
         }
     }
 
@@ -142,6 +144,7 @@ struct TodayView: View {
     private func gaugeTile(_ store: TodayStore, _ metric: MetricKind) -> some View {
         if let model = store.cards[metric] {
             TodayGaugeTile(model: model) { path.append(AppRoute.metricDetail(metric)) }
+                .pulseZoomSource(AppRoute.metricDetail(metric), in: zoomNS)
         }
     }
 
@@ -156,6 +159,7 @@ struct TodayView: View {
                 diastolicZones: VitalsThresholdEngine.diastolicReferenceZones(),
                 onTap: { path.append(AppRoute.metricDetail(.bloodPressure)) }
             )
+            .pulseZoomSource(AppRoute.metricDetail(.bloodPressure), in: zoomNS)
         }
     }
 }
