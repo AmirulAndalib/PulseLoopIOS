@@ -469,7 +469,7 @@ struct OnboardingActionFooter<Content: View>: View {
             .padding(.top, 12)
             .padding(.bottom, 8)
             .frame(maxWidth: .infinity)
-            .background(.ultraThinMaterial)
+            .pulseGlass(Rectangle())
             .overlay(alignment: .top) {
                 Rectangle()
                     .fill(PulseColors.borderSubtle)

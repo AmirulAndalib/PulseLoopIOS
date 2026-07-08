@@ -547,7 +547,7 @@ struct RecordLiveView: View {
                             .font(.system(size: 13, weight: .semibold)).tracking(2)
                             .foregroundStyle(PulseColors.textPrimary)
                             .padding(.horizontal, 18).padding(.vertical, 10)
-                            .background(.ultraThinMaterial, in: Capsule())
+                            .pulseGlass(Capsule())
                             .frame(maxWidth: .infinity)
                     }
                 }
@@ -563,7 +563,7 @@ struct RecordLiveView: View {
                     PrimaryButton(title: "Finish", systemImage: "flag.checkered") { confirmFinish = true }
                 }
                 .padding(16)
-                .background(.ultraThinMaterial)
+                .pulseGlass(Rectangle())
             }
             .navigationBarBackButtonHidden(true)
             .onAppear { liveWorkout.ensureActive(session) }
@@ -847,7 +847,7 @@ private struct LiveRouteMapSection: View {
                         .font(.system(size: 13, weight: .semibold)).tracking(2)
                         .foregroundStyle(PulseColors.textPrimary)
                         .padding(.horizontal, 18).padding(.vertical, 10)
-                        .background(.ultraThinMaterial, in: Capsule())
+                        .pulseGlass(Capsule())
                 }
             }
 

@@ -93,7 +93,7 @@ struct WorkoutMapView: View {
             .font(.system(size: 10, weight: .medium)).monospacedDigit()
             .foregroundStyle(PulseColors.textSecondary)
             .padding(.horizontal, 8).padding(.vertical, 4)
-            .background(.ultraThinMaterial, in: Capsule())
+            .pulseGlass(Capsule())
             .padding(8)
     }
 
@@ -108,7 +108,7 @@ struct WorkoutMapView: View {
             }
         }
         .padding(.horizontal, 8).padding(.vertical, 5)
-        .background(.ultraThinMaterial, in: Capsule())
+        .pulseGlass(Capsule(), interactive: true)
         .padding(8)
     }
 
