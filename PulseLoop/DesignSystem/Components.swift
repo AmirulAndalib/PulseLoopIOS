@@ -264,26 +264,15 @@ struct SleepRangeSelectorView: View {
     private let options: [(SleepRangeKey, String)] = [(.day, "Day"), (.week, "Week"), (.month, "Month"), (.year, "Year")]
 
     var body: some View {
-        HStack(spacing: 4) {
+        // A standard segmented control — it adopts Liquid Glass automatically on
+        // iOS 26, matching the metric-detail period bar (was a custom accent-tinted
+        // capsule, which looked out of place next to the glass segmented bars).
+        Picker("Range", selection: $selection) {
             ForEach(options, id: \.0) { option in
-                let active = selection == option.0
-                Button { selection = option.0 } label: {
-                    Text(option.1)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(active ? PulseColors.textPrimary : PulseColors.textMuted)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 6)
-                        .background(active ? PulseColors.accent.opacity(0.15) : Color.clear)
-                        .clipShape(Capsule())
-                        .overlay(Capsule().stroke(active ? PulseColors.accent.opacity(0.4) : Color.clear, lineWidth: 1))
-                }
-                .buttonStyle(.plain)
+                Text(option.1).tag(option.0)
             }
         }
-        .padding(4)
-        .background(PulseColors.cardSoft.opacity(0.4))
-        .clipShape(Capsule())
-        .overlay(Capsule().stroke(PulseColors.borderSubtle, lineWidth: 1))
+        .pickerStyle(.segmented)
     }
 }
 
