@@ -38,8 +38,13 @@ Example — set time: `01 00 0e00 ea0707060c220e00 26c7` → `2026-07-06 12:34:1
 
 ## Timestamps
 
-Seconds since **2000-01-01 UTC** (add 946684800 for Unix). Confirmed against the capture's
-wall-clock time.
+Seconds since **2000-01-01**, but the ring has **no timezone concept**: `TK5Encoder.setTime` sends
+raw local wall-clock fields (see the set-time command above) with no timezone byte, and the ring's
+clock just ticks forward in real seconds from whatever instant those fields describe. Decoding
+(`TK5Bytes.date`) must therefore un-apply the device's current UTC offset to recover the true
+absolute instant — treating the stored seconds as pure UTC (the original approach) silently shifts
+every decoded timestamp by a full UTC-offset, which is enough to flip a sleep session onto the
+wrong side of the app's 7 PM day boundary for any non-UTC timezone.
 
 ## Commands (verified)
 

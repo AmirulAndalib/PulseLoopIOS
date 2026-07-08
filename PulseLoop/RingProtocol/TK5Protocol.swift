@@ -133,13 +133,22 @@ enum TK5Bytes {
         return Int(b[i]) | (Int(b[i + 1]) << 8) | (Int(b[i + 2]) << 16) | (Int(b[i + 3]) << 24)
     }
 
-    /// Convert a ring timestamp (2000-epoch seconds) to a `Date`.
-    static func date(_ ringSeconds: Int) -> Date {
-        Date(timeIntervalSince1970: TimeInterval(ringSeconds) + epochOffset)
+    /// Convert a ring timestamp (2000-epoch seconds) to a `Date`. The ring has no timezone concept —
+    /// its clock is set from local wall-clock fields (see `TK5Encoder.setTime`) and ticks in local
+    /// time, so decoding must un-apply the device's UTC offset to recover the true absolute instant.
+    /// Without this, `Calendar.current` re-applies that same offset when a caller later extracts
+    /// local components (e.g. `Calendar.wakingDay(forSleepStart:)`'s hour check), doubling it instead
+    /// of cancelling it. Uses the *current* offset as an approximation of the offset in effect when
+    /// the timestamp was recorded — correct for same-session syncs, only wrong across a DST
+    /// transition that happens between recording and decoding.
+    static func date(_ ringSeconds: Int, timeZone: TimeZone = .current) -> Date {
+        let offset = TimeInterval(timeZone.secondsFromGMT())
+        return Date(timeIntervalSince1970: TimeInterval(ringSeconds) + epochOffset - offset)
     }
 
-    /// Convert a `Date` to ring seconds (2000-epoch).
-    static func ringSeconds(_ date: Date) -> Int {
-        Int(date.timeIntervalSince1970 - epochOffset)
+    /// Convert a `Date` to ring seconds (2000-epoch), the inverse of `date(_:timeZone:)`.
+    static func ringSeconds(_ date: Date, timeZone: TimeZone = .current) -> Int {
+        let offset = TimeInterval(timeZone.secondsFromGMT(for: date))
+        return Int(date.timeIntervalSince1970 - epochOffset + offset)
     }
 }

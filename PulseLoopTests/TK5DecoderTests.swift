@@ -148,6 +148,46 @@ final class TK5DecoderTests: XCTestCase {
         }
     }
 
+    // MARK: Timestamp decode
+
+    func testDateDecodeRecoversTrueInstantAcrossTimeZone() {
+        // The ring has no timezone concept: TK5Encoder.setTime sends *local* wall-clock fields, and
+        // the ring stores them naively as if they were UTC (no timezone byte in the wire format —
+        // see docs/TK5-Protocol.md). Simulate that here for a non-UTC zone and confirm decode still
+        // recovers the true absolute instant, rather than shifting it by a full UTC-offset (which is
+        // what put last night's sleep session on the wrong side of the app's 7 PM day boundary).
+        let tz = TimeZone(identifier: "America/New_York")!
+        var localCalendar = Calendar(identifier: .gregorian)
+        localCalendar.timeZone = tz
+
+        // Snap to the second so DateComponents round-trips exactly.
+        let trueInstant = Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded())
+        let localFields = localCalendar.dateComponents(
+            [.year, .month, .day, .hour, .minute, .second], from: trueInstant
+        )
+
+        // What the ring's own naive clock would store: the local fields, reinterpreted as if they
+        // were UTC (no timezone concept on-device).
+        var utcCalendar = Calendar(identifier: .gregorian)
+        utcCalendar.timeZone = TimeZone(identifier: "UTC")!
+        let ringNaiveInstant = utcCalendar.date(from: localFields)!
+        let ringSecondsFromRing = Int(ringNaiveInstant.timeIntervalSince1970 - TK5Bytes.epochOffset)
+
+        let decoded = TK5Bytes.date(ringSecondsFromRing, timeZone: tz)
+
+        XCTAssertEqual(decoded.timeIntervalSince1970, trueInstant.timeIntervalSince1970, accuracy: 1)
+    }
+
+    func testRingSecondsAndDateRoundTrip() {
+        let tz = TimeZone(identifier: "America/New_York")!
+        let date = Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded())
+
+        let ringSeconds = TK5Bytes.ringSeconds(date, timeZone: tz)
+        let decoded = TK5Bytes.date(ringSeconds, timeZone: tz)
+
+        XCTAssertEqual(decoded.timeIntervalSince1970, date.timeIntervalSince1970, accuracy: 1)
+    }
+
     // MARK: Sleep
 
     func testSleepDecodeMatchesAppBreakdown() {
