@@ -70,7 +70,6 @@ struct HeroInsightCardView: View {
             )
         )
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
     }
 }
 
@@ -133,9 +132,7 @@ struct CoachMessageCard: View {
                             .padding(.horizontal, 10)
                             .padding(.vertical, 5)
                             .foregroundStyle(PulseColors.textSecondary)
-                            .background(PulseColors.cardSoft)
-                            .clipShape(Capsule())
-                            .overlay(Capsule().stroke(PulseColors.borderSubtle, lineWidth: 1))
+                            .pulseGlass(Capsule())
                     }
                 }
                 .padding(.top, 12)
@@ -249,9 +246,9 @@ struct RangeToggleView: View {
             }
         }
         .padding(2)
-        .background(PulseColors.cardSoft.opacity(0.4))
-        .clipShape(Capsule())
-        .overlay(Capsule().stroke(PulseColors.borderSubtle, lineWidth: 1))
+        // Glass track; the active segment stays a solid dark pill so the selection
+        // reads clearly against the translucent container (no glass-on-glass).
+        .pulseGlass(Capsule())
     }
 }
 
@@ -397,7 +394,6 @@ struct SleepHeroCardView: View {
             )
         )
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
     }
 }
 

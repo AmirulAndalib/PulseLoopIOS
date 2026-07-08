@@ -133,8 +133,7 @@ struct RecordSummaryView: View {
                             .font(PulseFont.footnote)
                             .foregroundStyle(active ? PulseColors.textPrimary : PulseColors.textSecondary)
                             .padding(.horizontal, 12).padding(.vertical, 8)
-                            .background(active ? PulseColors.accentSoft : PulseColors.cardSoft, in: Capsule())
-                            .overlay(Capsule().stroke(active ? PulseColors.accent : PulseColors.borderSubtle, lineWidth: 1))
+                            .pulseGlass(Capsule(), interactive: true, tint: active ? PulseColors.accent : nil)
                     }
                     .buttonStyle(.plain)
                 }
@@ -143,12 +142,11 @@ struct RecordSummaryView: View {
                 .lineLimit(2...4)
                 .font(PulseFont.subheadline.weight(.regular))
                 .padding(12)
-                .background(PulseColors.cardSoft, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .pulseGlass(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16).background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+        .padding(16)
+        .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 
     private func done(_ session: ActivitySession) {
@@ -195,9 +193,7 @@ struct LiveSensorTile: View {
         .padding(16)
         // Stretch to fill the grid cell so all tiles in a row are the same height.
         .frame(maxWidth: .infinity, minHeight: 92, maxHeight: .infinity, alignment: .topLeading)
-        .background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+        .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .onAppear { startPulse(pulsing) }
         .onChange(of: pulsing) { _, now in startPulse(now) }
     }
@@ -286,8 +282,7 @@ struct StatusPill: View {
         }
         .foregroundStyle(tint)
         .padding(.horizontal, 8).padding(.vertical, 4)
-        .background(PulseColors.cardSoft, in: Capsule())
-        .overlay(Capsule().stroke(PulseColors.borderSubtle, lineWidth: 1))
+        .pulseGlass(Capsule())
     }
 }
 
@@ -342,9 +337,8 @@ struct RecordingQualityCard: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16).background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+        .padding(16)
+        .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 
     private func qualityRows() -> [(String, String, Color)] {

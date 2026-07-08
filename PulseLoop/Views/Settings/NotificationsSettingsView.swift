@@ -47,7 +47,7 @@ struct NotificationsSettingsView: View {
 
     @ViewBuilder private var batteryAlertControls: some View {
         SectionHeader(title: "Ring battery alerts", action: nil)
-        toggleRow("Low battery notifications", isOn: Binding(
+        SettingsToggleRow(title: "Low battery notifications", isOn: Binding(
             get: { batteryAlertsEnabled },
             set: { setBatteryAlerts($0) }
         ))
@@ -58,15 +58,15 @@ struct NotificationsSettingsView: View {
     }
 
     @ViewBuilder private var notificationsControls: some View {
-        toggleRow("Daily check-in notifications", isOn: Binding(
+        SettingsToggleRow(title: "Daily check-in notifications", isOn: Binding(
             get: { store.settings.notificationsEnabled },
             set: { setNotifications($0) }
         ))
 
         if store.settings.notificationsEnabled {
-            labeledRow("Morning") { hourPicker(hourBinding(\.morningHour)) }
-            labeledRow("Midday") { hourPicker(hourBinding(\.middayHour)) }
-            labeledRow("Evening") { hourPicker(hourBinding(\.eveningHour)) }
+            SettingsLabeledRow(title: "Morning") { hourPicker(hourBinding(\.morningHour)) }
+            SettingsLabeledRow(title: "Midday") { hourPicker(hourBinding(\.middayHour)) }
+            SettingsLabeledRow(title: "Evening") { hourPicker(hourBinding(\.eveningHour)) }
             QuickActionButton(label: "Send a test check-in now") { sendTestCheckin() }
             if let testStatus {
                 Text(testStatus).font(.caption).foregroundStyle(PulseColors.textMuted)
@@ -75,7 +75,7 @@ struct NotificationsSettingsView: View {
             // Proactive anomaly alerts — on-device only (free/private local
             // inference makes "watch the stream and speak up" practical).
             SectionHeader(title: "Proactive alerts", action: nil)
-            toggleRow("Anomaly heads-ups (on-device)", isOn: Binding(
+            SettingsToggleRow(title: "Anomaly heads-ups (on-device)", isOn: Binding(
                 get: { store.settings.proactiveAlertsEnabled },
                 set: { store.settings.proactiveAlertsEnabled = $0 }
             ))
@@ -153,28 +153,4 @@ struct NotificationsSettingsView: View {
         }
     }
 
-    // MARK: - Layout helpers (match CoachSettingsSection idiom)
-
-    private func labeledRow<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        HStack {
-            Text(title).font(PulseFont.subheadline).foregroundStyle(PulseColors.textPrimary)
-            Spacer()
-            content()
-        }
-        .padding(.horizontal, 16).padding(.vertical, 10)
-        .background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
-    }
-
-    private func toggleRow(_ title: String, isOn: Binding<Bool>) -> some View {
-        Toggle(isOn: isOn) {
-            Text(title).font(PulseFont.subheadline).foregroundStyle(PulseColors.textPrimary)
-        }
-        .tint(PulseColors.accent)
-        .padding(.horizontal, 16).padding(.vertical, 6)
-        .background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
-    }
 }

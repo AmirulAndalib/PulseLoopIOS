@@ -335,12 +335,7 @@ struct PairingView: View {
                 }
         }
         .padding(16) // §4 card wrapper
-        .background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(PulseColors.borderSubtle, lineWidth: 1)
-        )
+        .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 
     private func ringRow(_ ring: RingBLEClient.DiscoveredRing) -> some View {
@@ -433,7 +428,6 @@ struct PairingView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 32)
-        .background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 }

@@ -19,8 +19,7 @@ struct CapabilityChips: View {
                     .foregroundStyle(ChipTone.neutral.foreground)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                    .background(ChipTone.neutral.background, in: Capsule())
-                    .overlay(Capsule().strokeBorder(ChipTone.neutral.border, lineWidth: 1))
+                    .pulseGlass(Capsule())
             }
         }
         return ViewThatFits(in: .horizontal) {

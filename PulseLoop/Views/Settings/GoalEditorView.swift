@@ -79,34 +79,29 @@ struct GoalEditorView: View {
         value: Binding<Double>,
         label: String
     ) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
-                Image(systemName: spec.icon)
-                    .font(PulseFont.subheadline.weight(.semibold))
-                    .foregroundStyle(spec.tint)
-                    .frame(width: 30, height: 30)
-                    .background(spec.tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-                Text(spec.title)
-                    .font(PulseFont.callout)
-                    .foregroundStyle(PulseColors.textPrimary)
-                Spacer()
-                Text(label)
-                    .font(PulseFont.bodyEmphasis)
-                    .monospacedDigit()
-                    .foregroundStyle(spec.tint)
+        SettingsCard(cornerRadius: 18) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 10) {
+                    Image(systemName: spec.icon)
+                        .font(PulseFont.subheadline.weight(.semibold))
+                        .foregroundStyle(spec.tint)
+                        .frame(width: 30, height: 30)
+                        .background(spec.tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    Text(spec.title)
+                        .font(PulseFont.callout)
+                        .foregroundStyle(PulseColors.textPrimary)
+                    Spacer()
+                    Text(label)
+                        .font(PulseFont.bodyEmphasis)
+                        .monospacedDigit()
+                        .foregroundStyle(spec.tint)
+                }
+                Slider(value: value, in: spec.range, step: spec.step)
+                    .tint(spec.tint)
+                    .accessibilityLabel(spec.title)
+                    .accessibilityValue(label)
             }
-            Slider(value: value, in: spec.range, step: spec.step)
-                .tint(spec.tint)
-                .accessibilityLabel(spec.title)
-                .accessibilityValue(label)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
-        .background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(PulseColors.borderSubtle, lineWidth: 1)
-        )
     }
 }

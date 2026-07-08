@@ -370,8 +370,7 @@ private struct EditWorkoutSheet: View {
             content()
         }
         .padding(.horizontal, 16).padding(.vertical, 8)
-        .background(PulseColors.cardSoft, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+        .pulseGlass(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 }
 
@@ -433,9 +432,7 @@ struct RecordSelectView: View {
                 .tint(PulseColors.accent)
                 .disabled(!gpsCapable)
                 .padding(16)
-                .background(PulseColors.card)
-                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+                .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
 
                 PrimaryButton(title: "Start", systemImage: "play.fill") {
                     let willUseGps = useGps && gpsCapable

@@ -200,12 +200,7 @@ struct OnboardingWelcomeView: View {
                         .frame(maxWidth: .infinity)
                         .frame(height: 118, alignment: .center)
                         .padding(.horizontal, 13)
-                        .background(PulseColors.card)
-                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                .stroke(PulseColors.borderSubtle, lineWidth: 1)
-                        )
+                        .pulseGlass(RoundedRectangle(cornerRadius: 16, style: .continuous))
                     }
                 }
 

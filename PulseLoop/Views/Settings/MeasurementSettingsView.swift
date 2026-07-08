@@ -49,7 +49,7 @@ struct MeasurementSettingsView: View {
     @ViewBuilder
     private var content: some View {
         SectionHeader(title: "Heart rate", action: nil)
-        toggleRow("All-day heart rate", isOn: $hrEnabled)
+        SettingsToggleRow(title: "All-day heart rate", isOn: $hrEnabled)
         if hrEnabled {
             hrIntervalCard
         }
@@ -60,10 +60,10 @@ struct MeasurementSettingsView: View {
             .foregroundStyle(PulseColors.textMuted)
             .frame(maxWidth: .infinity, alignment: .leading)
 
-        if capabilities.contains(.spo2) { toggleRow("Blood oxygen (SpO₂)", isOn: $spo2Enabled) }
-        if capabilities.contains(.stress) { toggleRow("Stress", isOn: $stressEnabled) }
-        if capabilities.contains(.hrv) { toggleRow("HRV", isOn: $hrvEnabled) }
-        if capabilities.contains(.temperature) { toggleRow("Skin temperature", isOn: $temperatureEnabled) }
+        if capabilities.contains(.spo2) { SettingsToggleRow(title: "Blood oxygen (SpO₂)", isOn: $spo2Enabled) }
+        if capabilities.contains(.stress) { SettingsToggleRow(title: "Stress", isOn: $stressEnabled) }
+        if capabilities.contains(.hrv) { SettingsToggleRow(title: "HRV", isOn: $hrvEnabled) }
+        if capabilities.contains(.temperature) { SettingsToggleRow(title: "Skin temperature", isOn: $temperatureEnabled) }
 
         PrimaryButton(title: "Save & sync to ring", systemImage: "checkmark") { save() }
 
@@ -77,42 +77,29 @@ struct MeasurementSettingsView: View {
     }
 
     private var hrIntervalCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Measure every").font(PulseFont.subheadline).foregroundStyle(PulseColors.textPrimary)
-                Spacer()
-                Text("\(hrIntervalMinutes) min")
-                    .font(PulseFont.callout.weight(.semibold)).monospacedDigit()
-                    .foregroundStyle(PulseColors.accent)
+        SettingsCard(cornerRadius: 16) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("Measure every").font(PulseFont.subheadline).foregroundStyle(PulseColors.textPrimary)
+                    Spacer()
+                    Text("\(hrIntervalMinutes) min")
+                        .font(PulseFont.callout.weight(.semibold)).monospacedDigit()
+                        .foregroundStyle(PulseColors.accent)
+                }
+                Slider(
+                    value: Binding(
+                        get: { Double(hrIntervalMinutes) },
+                        set: { hrIntervalMinutes = Int(($0 / 5).rounded()) * 5 }
+                    ),
+                    in: 5...60,
+                    step: 5
+                )
+                .tint(PulseColors.accent)
+                Text("More frequent readings give finer trends but use more battery.")
+                    .font(.caption).foregroundStyle(PulseColors.textMuted)
             }
-            Slider(
-                value: Binding(
-                    get: { Double(hrIntervalMinutes) },
-                    set: { hrIntervalMinutes = Int(($0 / 5).rounded()) * 5 }
-                ),
-                in: 5...60,
-                step: 5
-            )
-            .tint(PulseColors.accent)
-            Text("More frequent readings give finer trends but use more battery.")
-                .font(.caption).foregroundStyle(PulseColors.textMuted)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
-        .background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
-    }
-
-    private func toggleRow(_ title: String, isOn: Binding<Bool>) -> some View {
-        Toggle(isOn: isOn) {
-            Text(title).font(PulseFont.subheadline).foregroundStyle(PulseColors.textPrimary)
-        }
-        .tint(PulseColors.accent)
-        .padding(.horizontal, 16).padding(.vertical, 8)
-        .background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
     }
 
     // MARK: - Load / save

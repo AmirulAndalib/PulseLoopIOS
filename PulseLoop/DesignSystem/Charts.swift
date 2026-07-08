@@ -414,8 +414,7 @@ struct SleepDurationHistogramChart: View {
         }
         .frame(height: height)
         .padding(8)
-        .background(Color(hex: "#0F141F"), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.white.opacity(0.06), lineWidth: 1))
+        .pulseGlass(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 }
 
@@ -470,10 +469,6 @@ struct SleepHypnogramView: View {
     var body: some View {
         VStack(spacing: 6) {
             ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(Color(hex: "#0F141F"))
-                    .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.white.opacity(0.06), lineWidth: 1))
-
                 // Lane labels on the left.
                 VStack(alignment: .leading) {
                     ForEach(lanes, id: \.self) { stage in
@@ -525,6 +520,7 @@ struct SleepHypnogramView: View {
                 .padding(.trailing, 16)
             }
             .frame(height: height - 22)
+            .pulseGlass(RoundedRectangle(cornerRadius: 16, style: .continuous))
 
             // Time ticks.
             HStack {

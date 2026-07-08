@@ -141,13 +141,14 @@ extension Color {
 
 struct PulseCard<Content: View>: View {
     var padding: CGFloat = 16
+    var cornerRadius: CGFloat = 20
     @ViewBuilder var content: Content
-    
+
     var body: some View {
         content
             .padding(padding)
             // Liquid Glass card surface (glass 26+, Material 18–25, solid on Reduce Transparency).
-            .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .pulseGlass(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
     }
 }
 

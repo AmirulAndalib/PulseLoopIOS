@@ -58,7 +58,6 @@ struct WorkoutMapView: View {
             }
             .frame(height: height)
             .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
             .overlay(alignment: .bottomLeading) { infoOverlay }
             .overlay(alignment: .topTrailing) { if follow { followControls } }
             .onAppear { recenter() }
@@ -139,9 +138,7 @@ struct WorkoutMapView: View {
         }
         .frame(maxWidth: .infinity)
         .frame(height: height)
-        .background(PulseColors.cardSoft.opacity(0.4))
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+        .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 
     private var region: MKCoordinateRegion {

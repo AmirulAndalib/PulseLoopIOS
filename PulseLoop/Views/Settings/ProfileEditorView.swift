@@ -96,16 +96,12 @@ struct ProfileEditorView: View {
     }
 
     private func formCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        content()
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(PulseColors.card)
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(PulseColors.borderSubtle, lineWidth: 1)
-            )
+        SettingsCard(cornerRadius: 18, padding: 0) {
+            content()
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     private func pickerRow(title: String, value: String?, kind: ProfilePickerKind) -> some View {
@@ -203,17 +199,13 @@ private struct DecimalValueSheet: View {
                     .font(PulseFont.subheadline)
                     .foregroundStyle(PulseColors.textPrimary)
 
-                TextField(LocalizedDecimalInput.format(70.5), text: $text)
-                    .keyboardType(.decimalPad)
-                    .focused($fieldFocused)
-                    .font(PulseFont.numberL)
-                    .padding(14)
-                    .background(PulseColors.card, in: RoundedRectangle(cornerRadius: 14))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14)
-                            .stroke(PulseColors.borderSubtle, lineWidth: 1)
-                    )
-                    .accessibilityLabel("Weight in \(unit)")
+                SettingsCard(cornerRadius: 14, padding: 14) {
+                    TextField(LocalizedDecimalInput.format(70.5), text: $text)
+                        .keyboardType(.decimalPad)
+                        .focused($fieldFocused)
+                        .font(PulseFont.numberL)
+                }
+                .accessibilityLabel("Weight in \(unit)")
 
                 Text("You can use either a comma or a period as the decimal separator.")
                     .font(.caption)

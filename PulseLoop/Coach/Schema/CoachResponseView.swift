@@ -79,8 +79,7 @@ struct CoachResponseView: View {
                                     .font(PulseFont.caption.weight(.regular))
                                     .foregroundStyle(PulseColors.textSecondary)
                                     .padding(.horizontal, 12).padding(.vertical, 6)
-                                    .background(PulseColors.cardSoft, in: Capsule())
-                                    .overlay(Capsule().stroke(PulseColors.borderSubtle, lineWidth: 1))
+                                    .pulseGlass(Capsule(), interactive: true)
                             }
                             .buttonStyle(.plain)
                         }

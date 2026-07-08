@@ -195,9 +195,8 @@ struct WorkoutMetricsSections: View {
             content()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16).background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+        .padding(16)
+        .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 
     private var hrFootnote: String? {
@@ -304,9 +303,7 @@ private struct SummaryHeroBand: View {
         }
         .padding(.vertical, 18).padding(.horizontal, 8)
         .frame(maxWidth: .infinity)
-        .background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+        .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 }
 
@@ -353,9 +350,8 @@ private struct SplitsTable: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(16).background(PulseColors.card)
-            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+            .padding(16)
+            .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
         }
     }
 
@@ -402,9 +398,8 @@ private struct HRZonesCard: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(16).background(PulseColors.card)
-            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+            .padding(16)
+            .pulseGlass(RoundedRectangle(cornerRadius: 20, style: .continuous))
         }
     }
 }

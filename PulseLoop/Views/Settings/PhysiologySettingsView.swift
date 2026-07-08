@@ -31,7 +31,7 @@ struct PhysiologySettingsView: View {
         ScrollView {
             VStack(spacing: 16) {
                 SectionHeader(title: "Fitness", action: nil)
-                labeledCard("Athlete mode") {
+                SettingsLabeledRow(title: "Athlete mode") {
                     Toggle("", isOn: $athleteMode).labelsHidden().tint(PulseColors.accent)
                 }
                 Text("Treats a low resting heart rate as a sign of fitness rather than a concern, and relaxes the low-HR threshold.")
@@ -55,7 +55,7 @@ struct PhysiologySettingsView: View {
                     .padding(.horizontal, 4)
 
                 SectionHeader(title: "Units", action: nil)
-                labeledCard("Glucose unit") {
+                SettingsLabeledRow(title: "Glucose unit") {
                     Picker("Glucose unit", selection: $glucoseUnit) {
                         ForEach(GlucoseUnit.allCases) { Text($0.label).tag($0) }
                     }
@@ -74,36 +74,23 @@ struct PhysiologySettingsView: View {
 
     // MARK: - Cards
 
-    private func labeledCard<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        HStack {
-            Text(title).font(PulseFont.subheadline).foregroundStyle(PulseColors.textPrimary)
-            Spacer()
-            content()
-        }
-        .padding(.horizontal, 16).padding(.vertical, 10)
-        .background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
-    }
-
     private func numberCard(_ title: String, text: Binding<String>) -> some View {
-        HStack {
-            Text(title).font(PulseFont.subheadline).foregroundStyle(PulseColors.textPrimary)
-            Spacer()
-            TextField("0", text: text)
-                .keyboardType(.numberPad)
-                .multilineTextAlignment(.trailing)
-                .foregroundStyle(PulseColors.textPrimary)
-                .frame(maxWidth: 90)
+        SettingsCard(cornerRadius: 16, padding: 0) {
+            HStack {
+                Text(title).font(PulseFont.subheadline).foregroundStyle(PulseColors.textPrimary)
+                Spacer()
+                TextField("0", text: text)
+                    .keyboardType(.numberPad)
+                    .multilineTextAlignment(.trailing)
+                    .foregroundStyle(PulseColors.textPrimary)
+                    .frame(maxWidth: 90)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 12)
         }
-        .padding(.horizontal, 16).padding(.vertical, 12)
-        .background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
     }
 
     private func triStateCard(_ title: String, selection: Binding<TriState>) -> some View {
-        labeledCard(title) {
+        SettingsLabeledRow(title: title) {
             Picker(title, selection: selection) {
                 ForEach(TriState.allCases) { Text($0.label).tag($0) }
             }

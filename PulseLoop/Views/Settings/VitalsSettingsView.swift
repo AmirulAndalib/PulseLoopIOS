@@ -52,27 +52,26 @@ struct MetricPrefsSettingsView: View {
     }
 
     private var resolutionCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Picker("Resolution", selection: Binding(
-                get: { store.resolution(for: scope) },
-                set: { store.setResolution($0, for: scope) }
-            )) {
-                ForEach(GraphResolution.allCases) { Text($0.label).tag($0) }
-            }
-            .pickerStyle(.segmented)
+        SettingsCard(cornerRadius: 16) {
+            VStack(alignment: .leading, spacing: 10) {
+                Picker("Resolution", selection: Binding(
+                    get: { store.resolution(for: scope) },
+                    set: { store.setResolution($0, for: scope) }
+                )) {
+                    ForEach(GraphResolution.allCases) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented)
 
-            Text(store.resolution(for: scope).blurb)
-                .font(.caption)
-                .foregroundStyle(PulseColors.textMuted)
+                Text(store.resolution(for: scope).blurb)
+                    .font(.caption)
+                    .foregroundStyle(PulseColors.textMuted)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
-        .background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
     }
 
     private func visibilityRow(_ metric: MetricKey, label: String, color: Color) -> some View {
+        SettingsCard(cornerRadius: 16, padding: 0) {
         Toggle(isOn: Binding(
             get: { !store.isHidden(metric, scope: scope) },
             set: { store.setHidden(metric, !$0, scope: scope) }
@@ -84,9 +83,7 @@ struct MetricPrefsSettingsView: View {
         }
         .tint(PulseColors.accent)
         .padding(.horizontal, 16).padding(.vertical, 8)
-        .background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
+        }
     }
 }
 

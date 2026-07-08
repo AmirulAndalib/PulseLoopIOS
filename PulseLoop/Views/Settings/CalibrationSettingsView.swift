@@ -107,19 +107,13 @@ struct CalibrationSettingsView: View {
     }
 
     private func numberRow(_ title: String, text: Binding<String>) -> some View {
-        HStack {
-            Text(title).font(PulseFont.subheadline).foregroundStyle(PulseColors.textPrimary)
-            Spacer()
+        SettingsLabeledRow(title: title) {
             TextField("0", text: text)
                 .keyboardType(.numberPad)
                 .multilineTextAlignment(.trailing)
                 .foregroundStyle(PulseColors.textPrimary)
                 .frame(maxWidth: 90)
         }
-        .padding(.horizontal, 16).padding(.vertical, 12)
-        .background(PulseColors.card)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
     }
 
     // MARK: - Load / save

@@ -92,9 +92,7 @@ struct AboutSettingsView: View {
                     .foregroundStyle(PulseColors.textPrimary)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
-                    .background(PulseColors.elevated, in: Capsule())
-                    .overlay(Capsule().stroke(PulseColors.borderSubtle, lineWidth: 1))
-                    .shadow(color: .black.opacity(0.25), radius: 8, y: 2)
+                    .pulseGlass(Capsule())
                     .padding(.bottom, 28)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
@@ -138,26 +136,24 @@ struct AboutSettingsView: View {
 
     private func linkCard(icon: String, title: String, subtitle: String, url: URL) -> some View {
         Link(destination: url) {
-            HStack(spacing: 14) {
-                Image(systemName: icon)
-                    .font(PulseFont.callout.weight(.semibold))
-                    .foregroundStyle(PulseColors.accent)
-                    .frame(width: 36, height: 36)
-                    .background(PulseColors.accent.opacity(0.14), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(PulseFont.callout.weight(.semibold)).foregroundStyle(PulseColors.textPrimary)
-                    Text(subtitle).font(PulseFont.caption.weight(.regular)).foregroundStyle(PulseColors.textSecondary)
+            SettingsCard(cornerRadius: 20) {
+                HStack(spacing: 14) {
+                    Image(systemName: icon)
+                        .font(PulseFont.callout.weight(.semibold))
+                        .foregroundStyle(PulseColors.accent)
+                        .frame(width: 36, height: 36)
+                        .background(PulseColors.accent.opacity(0.14), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title).font(PulseFont.callout.weight(.semibold)).foregroundStyle(PulseColors.textPrimary)
+                        Text(subtitle).font(PulseFont.caption.weight(.regular)).foregroundStyle(PulseColors.textSecondary)
+                    }
+                    Spacer(minLength: 8)
+                    Image(systemName: "arrow.up.right")
+                        .font(PulseFont.caption.weight(.semibold))
+                        .foregroundStyle(PulseColors.textMuted)
                 }
-                Spacer(minLength: 8)
-                Image(systemName: "arrow.up.right")
-                    .font(PulseFont.caption.weight(.semibold))
-                    .foregroundStyle(PulseColors.textMuted)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(16)
-            .background(PulseColors.card)
-            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(PulseColors.borderSubtle, lineWidth: 1))
         }
         .buttonStyle(.plain)
     }
