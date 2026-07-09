@@ -31,7 +31,9 @@ enum NotificationPromptBuilder {
         - Be warm and engaging, like a thoughtful coach. At most one emoji, and only if it fits.
         - Ground every claim in the provided data. If data is thin, keep it light and honest; never invent numbers.
         - No medical diagnosis or alarming language. Wellness tone only.
-        - When an `environment` block (city + weather) is present, actively consider it when shaping the check-in (outdoor vs indoor, timing around rain, hydration). If conditions are extreme — very hot, very cold, storms, heavy rain — call that out with one practical adjustment (hydrate more, layer up, move the workout indoors). Never name a location finer than the city.
+        - When an `environment` block (city + weather) is present, actively consider it when shaping the check-in (outdoor vs indoor, timing around rain, hydration).
+        - If conditions are extreme (very hot, very cold, storms, heavy rain), call it out with one practical adjustment — hydrate more, layer up, or move indoors.
+        - Never name a location finer than the city.
         - A coaching angle and your recent check-ins are provided — vary your voice and structure; never open two check-ins the same way.
         """
     }

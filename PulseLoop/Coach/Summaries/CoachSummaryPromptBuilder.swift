@@ -19,7 +19,7 @@ enum CoachSummaryPromptBuilder {
 
         Rules:
         - Output ONLY JSON {"title","body","chips"}. Title ≤ ~6 words. Body 1–2 short, specific sentences citing real numbers from the data.
-        - `chips` is up to 2 short follow-up questions the user might tap to dig in (e.g. "Why is my deep sleep low?"). Keep each under 40 characters — they render side by side. Phrase them as the user would ask the coach.
+        - `chips`: up to 2 short follow-up questions the user might tap (e.g. "Why is my deep sleep low?"). Keep each under 40 characters — they render side by side. Phrase them as the user would ask.
         - Be warm, specific, and genuinely useful — not generic. Ground every claim in the provided data; if data is thin, say so lightly and never invent numbers.
         - No medical diagnosis or alarming language. Wellness tone. At most one emoji, only if it fits.
         - When an `environment` block (city + weather) is present, you may use it for concrete advice (outdoor vs indoor, hydration, rain). Never name a location finer than the city; don't force it.
