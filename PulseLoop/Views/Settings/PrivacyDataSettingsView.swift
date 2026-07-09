@@ -2,7 +2,8 @@ import SwiftUI
 import SwiftData
 import UIKit
 
-/// Privacy & Data detail screen. Grouped iOS-style sections:
+/// Privacy & Data detail screen. Grouped iOS-style sections, each a single inset card of full-width
+/// rows with a one-line description footer:
 ///   • Diagnostics — export a diagnostics bundle (leaves room for a future Import).
 ///   • App data — destructive reset/restore: unpair the ring, factory-reset app data, or both.
 ///   • Demo data — clear or reseed the local demo dataset.
@@ -54,60 +55,45 @@ struct PrivacyDataSettingsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
-                // MARK: Diagnostics
                 SettingsGroup(
                     header: "Diagnostics",
-                    footer: "Ring data is stored only on this device. Nothing is uploaded except a Coach question you choose to send."
+                    footer: "A local snapshot for troubleshooting — nothing leaves the device unless you share it."
                 ) {
-                    FormField {
-                        SecondaryButton(title: "Export diagnostics", systemImage: "square.and.arrow.up") {
-                            diagnosticsURL = DiagnosticsExporter.exportFile(context: modelContext)
-                        }
+                    actionRow("Export diagnostics", systemImage: "square.and.arrow.up") {
+                        diagnosticsURL = DiagnosticsExporter.exportFile(context: modelContext)
                     }
                 }
 
-                // MARK: App data (reset & restore)
                 SettingsGroup(
                     header: "App data",
                     footer: "Unpair releases the ring for other apps and keeps your health data. Resetting erases everything on this device and returns the app to onboarding."
                 ) {
-                    FormField {
-                        DangerButton(title: "Unpair ring", systemImage: "wave.3.right.circle") {
-                            pendingReset = .unpairRing
-                        }
+                    actionRow("Unpair ring", systemImage: "wave.3.right.circle", tint: PulseColors.danger) {
+                        pendingReset = .unpairRing
                     }
-                    FormField {
-                        DangerButton(title: "Reset app data", systemImage: "trash") {
-                            pendingReset = .resetAppData
-                        }
+                    actionRow("Reset app data", systemImage: "trash", tint: PulseColors.danger) {
+                        pendingReset = .resetAppData
                     }
-                    FormField {
-                        DangerButton(title: "Unpair ring & reset app data", systemImage: "trash.slash") {
-                            pendingReset = .unpairAndReset
-                        }
+                    actionRow("Unpair ring & reset app data", systemImage: "trash.slash", tint: PulseColors.danger) {
+                        pendingReset = .unpairAndReset
                     }
                 }
 
-                // MARK: Demo data
                 SettingsGroup(
                     header: "Demo data",
-                    footer: "Load or clear the sample dataset used to explore the app without a ring."
+                    footer: "Sample data for exploring the app without a ring."
                 ) {
-                    FormField {
-                        SecondaryButton(title: "Clear demo data", systemImage: "trash") {
-                            SeedData.clearAll(modelContext)
-                            let fresh = UserProfile()
-                            fresh.onboardingCompleted = true
-                            fresh.baselineCompleted = true
-                            modelContext.insert(fresh)
-                            try? modelContext.save()
-                        }
+                    actionRow("Clear demo data", systemImage: "trash") {
+                        SeedData.clearAll(modelContext)
+                        let fresh = UserProfile()
+                        fresh.onboardingCompleted = true
+                        fresh.baselineCompleted = true
+                        modelContext.insert(fresh)
+                        try? modelContext.save()
                     }
-                    FormField {
-                        SecondaryButton(title: "Reseed demo data", systemImage: "arrow.clockwise") {
-                            SeedData.clearAll(modelContext)
-                            SeedData.seedDemo(modelContext, completeOnboarding: true)
-                        }
+                    actionRow("Reseed demo data", systemImage: "arrow.clockwise") {
+                        SeedData.clearAll(modelContext)
+                        SeedData.seedDemo(modelContext, completeOnboarding: true)
                     }
                 }
             }
@@ -134,6 +120,36 @@ struct PrivacyDataSettingsView: View {
         } message: { action in
             Text(action.message)
         }
+    }
+
+    // MARK: - Rows
+
+    /// A flat, full-width settings row (icon + title) that runs `action`. No inner capsule — it sits
+    /// directly inside `SettingsGroup`, which supplies the grouped glass surface + hairline dividers,
+    /// so it matches the app's other grouped rows. `tint` colors both icon and title (danger for the
+    /// destructive App-data actions).
+    private func actionRow(
+        _ title: String,
+        systemImage: String,
+        tint: Color = PulseColors.textPrimary,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: systemImage)
+                    .font(PulseFont.body)
+                    .foregroundStyle(tint)
+                    .frame(width: 24)
+                Text(title)
+                    .font(PulseFont.body)
+                    .foregroundStyle(tint)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 16)
+            .frame(minHeight: 50)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Reset actions
@@ -182,43 +198,6 @@ struct PrivacyDataSettingsView: View {
         #if DEBUG
         UserDefaults.standard.set(true, forKey: "forceOnboarding")
         #endif
-    }
-}
-
-/// Full-width destructive action styled to match `SecondaryButton` (capsule + glass/card) but tinted
-/// `PulseColors.danger`. The app has no shared destructive button, so this local one keeps the three
-/// App-data actions visually consistent with the rest of the settings while reading clearly as danger.
-private struct DangerButton: View {
-    let title: String
-    var systemImage: String?
-    let action: () -> Void
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-
-    private var label: some View {
-        Label(title, systemImage: systemImage ?? "exclamationmark.triangle")
-            .font(PulseFont.callout.weight(.semibold))
-            .frame(maxWidth: .infinity)
-            .frame(height: 52)
-    }
-
-    var body: some View {
-        if #available(iOS 26, *), !reduceTransparency {
-            Button(role: .destructive, action: action) {
-                label.foregroundStyle(PulseColors.danger)
-            }
-            .buttonStyle(.glass)
-            .clipShape(Capsule())
-        } else {
-            Button(role: .destructive, action: action) {
-                label
-                    .foregroundStyle(PulseColors.danger)
-                    .background(PulseColors.card)
-                    .clipShape(Capsule())
-                    .overlay {
-                        Capsule().stroke(PulseColors.danger.opacity(0.4), lineWidth: 1)
-                    }
-            }
-        }
     }
 }
 
