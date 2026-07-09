@@ -12,78 +12,74 @@ struct WorkoutSettingsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 16) {
-                SectionHeader(title: "Sensors during workouts", action: nil)
-                Text("Choose which sensors the ring reads while a workout is recording, and how often. "
-                     + "More frequent reads give finer detail but use more battery.")
-                    .font(PulseFont.caption.weight(.regular))
-                    .foregroundStyle(PulseColors.textMuted)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                SettingsToggleRow(title: "Capture heart rate", isOn: Binding(
-                    get: { store.settings.captureHeartRate },
-                    set: { store.settings.captureHeartRate = $0 }
-                ))
-                if store.settings.captureHeartRate {
-                    SettingsLabeledRow(title: "HR every") {
-                        Picker("HR interval", selection: Binding(
-                            get: { store.settings.hrPollIntervalSeconds },
-                            set: { store.settings.hrPollIntervalSeconds = $0 }
-                        )) {
-                            ForEach(hrIntervals, id: \.self) { Text(intervalLabel($0)).tag($0) }
+            VStack(alignment: .leading, spacing: 22) {
+                SettingsGroup(
+                    header: "Sensors during workouts",
+                    footer: "Choose which sensors the ring reads while a workout is recording, and how often. "
+                        + "More frequent reads give finer detail but use more battery."
+                ) {
+                    FormToggleRow(title: "Capture heart rate", isOn: Binding(
+                        get: { store.settings.captureHeartRate },
+                        set: { store.settings.captureHeartRate = $0 }
+                    ))
+                    if store.settings.captureHeartRate {
+                        FormValueRow(title: "HR every") {
+                            Picker("HR interval", selection: Binding(
+                                get: { store.settings.hrPollIntervalSeconds },
+                                set: { store.settings.hrPollIntervalSeconds = $0 }
+                            )) {
+                                ForEach(hrIntervals, id: \.self) { Text(intervalLabel($0)).tag($0) }
+                            }
+                            .pickerStyle(.menu)
+                            .tint(PulseColors.accent)
                         }
-                        .pickerStyle(.menu)
-                        .tint(PulseColors.accent)
+                    }
+
+                    FormToggleRow(title: "Capture blood oxygen (SpO₂)", isOn: Binding(
+                        get: { store.settings.captureSpO2 },
+                        set: { store.settings.captureSpO2 = $0 }
+                    ))
+                    if store.settings.captureSpO2 {
+                        FormValueRow(title: "SpO₂ every") {
+                            Picker("SpO2 interval", selection: Binding(
+                                get: { store.settings.spo2PollIntervalSeconds },
+                                set: { store.settings.spo2PollIntervalSeconds = $0 }
+                            )) {
+                                ForEach(spo2Intervals, id: \.self) { Text(intervalLabel($0)).tag($0) }
+                            }
+                            .pickerStyle(.menu)
+                            .tint(PulseColors.accent)
+                        }
                     }
                 }
 
-                SettingsToggleRow(title: "Capture blood oxygen (SpO₂)", isOn: Binding(
-                    get: { store.settings.captureSpO2 },
-                    set: { store.settings.captureSpO2 = $0 }
-                ))
-                if store.settings.captureSpO2 {
-                    SettingsLabeledRow(title: "SpO₂ every") {
-                        Picker("SpO2 interval", selection: Binding(
-                            get: { store.settings.spo2PollIntervalSeconds },
-                            set: { store.settings.spo2PollIntervalSeconds = $0 }
-                        )) {
-                            ForEach(spo2Intervals, id: \.self) { Text(intervalLabel($0)).tag($0) }
+                SettingsGroup(header: "GPS") {
+                    FormToggleRow(title: "Record GPS route by default", isOn: Binding(
+                        get: { store.settings.useGpsByDefault },
+                        set: { store.settings.useGpsByDefault = $0 }
+                    ))
+                    FormField {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Picker("GPS accuracy", selection: Binding(
+                                get: { store.settings.gpsAccuracy },
+                                set: { store.settings.gpsAccuracy = $0 }
+                            )) {
+                                ForEach(GpsAccuracy.allCases) { Text($0.label).tag($0) }
+                            }
+                            .pickerStyle(.segmented)
+
+                            Text(store.settings.gpsAccuracy.blurb)
+                                .font(.caption)
+                                .foregroundStyle(PulseColors.textMuted)
                         }
-                        .pickerStyle(.menu)
-                        .tint(PulseColors.accent)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
-
-                SectionHeader(title: "GPS", action: nil)
-                SettingsToggleRow(title: "Record GPS route by default", isOn: Binding(
-                    get: { store.settings.useGpsByDefault },
-                    set: { store.settings.useGpsByDefault = $0 }
-                ))
-                accuracyCard
             }
             .padding()
         }
         .background(PulseColors.background)
         .pageChrome("Activity Tracking")
-    }
-
-    private var accuracyCard: some View {
-        SettingsCard(cornerRadius: 16) {
-            VStack(alignment: .leading, spacing: 10) {
-                Picker("GPS accuracy", selection: Binding(
-                    get: { store.settings.gpsAccuracy },
-                    set: { store.settings.gpsAccuracy = $0 }
-                )) {
-                    ForEach(GpsAccuracy.allCases) { Text($0.label).tag($0) }
-                }
-                .pickerStyle(.segmented)
-
-                Text(store.settings.gpsAccuracy.blurb)
-                    .font(.caption)
-                    .foregroundStyle(PulseColors.textMuted)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
     }
 
     /// "45s", "1 min", "1.5 min", "5 min" — never truncates, so 90s reads "1.5 min" instead of

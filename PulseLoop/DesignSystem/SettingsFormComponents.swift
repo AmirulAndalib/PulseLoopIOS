@@ -69,6 +69,134 @@ struct SettingsMenuRow<MenuContent: View>: View {
     }
 }
 
+// MARK: - Grouped iOS-style sections
+//
+// The main Settings list groups its rows into one glass card per section with hairline
+// dividers and an uppercase header (see SettingsSection in Views/Settings). These give the
+// Settings *detail* screens the same feel: a `SettingsGroup` owns the glass surface and
+// dividers, and the flat `Form*` rows go inside it (no per-row glass).
+
+/// An uppercase-headed group: a single grouped glass card wrapping its rows with hairline
+/// dividers between them. Place flat `FormToggleRow` / `FormValueRow` / `FormMenuRow` /
+/// `FormField` inside. `footer` renders explanatory caption text under the card.
+struct SettingsGroup<Content: View>: View {
+    var header: String? = nil
+    var footer: String? = nil
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            if let header {
+                Text(header.uppercased())
+                    .font(PulseFont.caption.weight(.semibold))
+                    .tracking(0.8)
+                    .foregroundStyle(PulseColors.textMuted)
+                    .padding(.leading, 16)
+                    .accessibilityAddTraits(.isHeader)
+            }
+            // Divide the rows with hairlines. `_VariadicView` lets the group insert a
+            // divider between each child without the caller interleaving them.
+            _VariadicView.Tree(GroupedRowLayout()) { content }
+                // Glass as a BACKGROUND layer so interactive rows (Menu/Picker) stay in
+                // the foreground, outside the iOS 26 glassEffect. See SettingsLabeledRow.
+                .background { Color.clear.pulseGlass(RoundedRectangle(cornerRadius: 18, style: .continuous)) }
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            if let footer {
+                Text(footer)
+                    .font(PulseFont.caption.weight(.regular))
+                    .foregroundStyle(PulseColors.textMuted)
+                    .padding(.horizontal, 16)
+            }
+        }
+    }
+}
+
+private struct GroupedRowLayout: _VariadicView.MultiViewRoot {
+    @ViewBuilder func body(children: _VariadicView.Children) -> some View {
+        let last = children.last?.id
+        VStack(spacing: 0) {
+            ForEach(children) { child in
+                child
+                if child.id != last {
+                    Divider()
+                        .overlay(PulseColors.borderSubtle)
+                        .padding(.leading, 16)
+                }
+            }
+        }
+    }
+}
+
+/// Flat accent toggle row for use inside `SettingsGroup`.
+struct FormToggleRow: View {
+    let title: String
+    @Binding var isOn: Bool
+
+    var body: some View {
+        Toggle(isOn: $isOn) {
+            Text(title).font(PulseFont.body).foregroundStyle(PulseColors.textPrimary)
+        }
+        .tint(PulseColors.accent)
+        .padding(.horizontal, 16)
+        .frame(minHeight: 50)
+    }
+}
+
+/// Flat title + trailing-control row for use inside `SettingsGroup`.
+struct FormValueRow<Trailing: View>: View {
+    let title: String
+    @ViewBuilder var trailing: Trailing
+
+    var body: some View {
+        HStack {
+            Text(title).font(PulseFont.body).foregroundStyle(PulseColors.textPrimary)
+            Spacer()
+            trailing
+        }
+        .padding(.horizontal, 16)
+        .frame(minHeight: 50)
+    }
+}
+
+/// Flat menu-selector row for use inside `SettingsGroup`. Owns a compact single-line,
+/// truncating value label (the `.menu` Picker ignores ancestor font/lineLimit). The Menu
+/// sits in the foreground, so it is safe over the group's background glass.
+struct FormMenuRow<MenuContent: View>: View {
+    let title: String
+    let value: String
+    @ViewBuilder var menuContent: MenuContent
+
+    var body: some View {
+        FormValueRow(title: title) {
+            Menu {
+                menuContent
+            } label: {
+                HStack(spacing: 4) {
+                    Text(value).lineLimit(1).truncationMode(.tail)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(PulseFont.caption2)
+                        .imageScale(.small)
+                }
+                .font(PulseFont.body)
+                .foregroundStyle(PulseColors.accent)
+            }
+        }
+    }
+}
+
+/// Flat container for arbitrary field content (sliders, steppers, multi-line) inside a
+/// `SettingsGroup`.
+struct FormField<Content: View>: View {
+    var padding: CGFloat = 16
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        content
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(padding)
+    }
+}
+
 /// Title + trailing control inside a glass settings row (picker, value, stepper, etc).
 /// Replaces the per-view `labeledRow` helper.
 struct SettingsLabeledRow<Trailing: View>: View {

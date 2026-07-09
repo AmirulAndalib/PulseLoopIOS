@@ -28,34 +28,37 @@ struct AboutSettingsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 16) {
-                SectionHeader(title: "App", action: nil)
-                Button(action: registerVersionTap) {
-                    StatusCopy(title: "Version", body: appVersionLabel)
-                }
-                .buttonStyle(VersionRowButtonStyle())
-                .overlay {
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .fill(PulseColors.accent.opacity(tapProgress * 0.22))
-                        .allowsHitTesting(false)
-                }
-                .overlay {
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .strokeBorder(PulseColors.accent.opacity(tapProgress * 0.9), lineWidth: 1.5)
-                        .allowsHitTesting(false)
-                }
-                .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: versionTapCount)
-                .accessibilityHint("Tap repeatedly to unlock developer options.")
-                .keyframeAnimator(initialValue: 1.0, trigger: versionTapCount) { content, value in
-                    content.scaleEffect(reduceMotion ? 1.0 : value)
-                } keyframes: { _ in
-                    LinearKeyframe(0.96, duration: 0.08)
-                    SpringKeyframe(1.0, duration: 0.28, spring: .bouncy(extraBounce: 0.15))
-                }
-                .sensoryFeedback(trigger: versionTapCount) { _, count in
-                    guard count > 0 else { return nil }
-                    if count >= developerTapThreshold { return .success }
-                    return count > 3 ? .impact(weight: .medium) : .impact(weight: .light)
+            VStack(alignment: .leading, spacing: 22) {
+                SettingsGroup(header: "App") {
+                    FormField {
+                        Button(action: registerVersionTap) {
+                            StatusCopy(title: "Version", body: appVersionLabel)
+                        }
+                        .buttonStyle(VersionRowButtonStyle())
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                .fill(PulseColors.accent.opacity(tapProgress * 0.22))
+                                .allowsHitTesting(false)
+                        }
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                .strokeBorder(PulseColors.accent.opacity(tapProgress * 0.9), lineWidth: 1.5)
+                                .allowsHitTesting(false)
+                        }
+                        .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: versionTapCount)
+                        .accessibilityHint("Tap repeatedly to unlock developer options.")
+                        .keyframeAnimator(initialValue: 1.0, trigger: versionTapCount) { content, value in
+                            content.scaleEffect(reduceMotion ? 1.0 : value)
+                        } keyframes: { _ in
+                            LinearKeyframe(0.96, duration: 0.08)
+                            SpringKeyframe(1.0, duration: 0.28, spring: .bouncy(extraBounce: 0.15))
+                        }
+                        .sensoryFeedback(trigger: versionTapCount) { _, count in
+                            guard count > 0 else { return nil }
+                            if count >= developerTapThreshold { return .success }
+                            return count > 3 ? .impact(weight: .medium) : .impact(weight: .light)
+                        }
+                    }
                 }
                 StatusCopy(
                     title: "PulseLoop",
@@ -66,13 +69,14 @@ struct AboutSettingsView: View {
                     """
                 )
 
-                SectionHeader(title: "Project", action: nil)
-                linkCard(
-                    icon: "chevron.left.forwardslash.chevron.right",
-                    title: "Source on GitHub",
-                    subtitle: "github.com/saksham2001/PulseLoopiOS",
-                    url: repoURL
-                )
+                SettingsGroup(header: "Project") {
+                    linkCard(
+                        icon: "chevron.left.forwardslash.chevron.right",
+                        title: "Source on GitHub",
+                        subtitle: "github.com/saksham2001/PulseLoopiOS",
+                        url: repoURL
+                    )
+                }
                 StatusCopy(
                     title: "License",
                     body: """
@@ -136,7 +140,7 @@ struct AboutSettingsView: View {
 
     private func linkCard(icon: String, title: String, subtitle: String, url: URL) -> some View {
         Link(destination: url) {
-            SettingsCard(cornerRadius: 20) {
+            FormField {
                 HStack(spacing: 14) {
                     Image(systemName: icon)
                         .font(PulseFont.callout.weight(.semibold))

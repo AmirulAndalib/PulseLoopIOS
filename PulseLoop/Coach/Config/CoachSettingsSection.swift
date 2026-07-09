@@ -100,15 +100,17 @@ struct CoachSettingsSection: View {
     }
 
     var body: some View {
-        SectionHeader(title: "AI Coach", action: nil)
         StatusCopy(title: "Status", body: flags.statusLine)
-        SettingsToggleRow(title: "Enable AI Coach", isOn: masterEnabledBinding)
-            .alert("Enable Coach Check-Ins?", isPresented: $askEnableCheckIns) {
-                Button("Enable") { enableCheckIns() }
-                Button("Not now", role: .cancel) {}
-            } message: {
-                Text("Get a daily check-in from your coach. You can change this anytime in Coach Check-Ins.")
-            }
+
+        SettingsGroup(header: "AI Coach") {
+            FormToggleRow(title: "Enable AI Coach", isOn: masterEnabledBinding)
+        }
+        .alert("Enable Coach Check-Ins?", isPresented: $askEnableCheckIns) {
+            Button("Enable") { enableCheckIns() }
+            Button("Not now", role: .cancel) {}
+        } message: {
+            Text("Get a daily check-in from your coach. You can change this anytime in Coach Check-Ins.")
+        }
 
         if checkInPermissionDenied {
             Text("Notifications are off for PulseLoop. Turn them on in iOS Settings to get check-ins.")
@@ -118,47 +120,49 @@ struct CoachSettingsSection: View {
         }
 
         if store.settings.coachMasterEnabled {
-            SettingsMenuRow(title: "Provider", value: store.settings.providerMode.label) {
-                Picker("Provider", selection: providerBinding) {
-                    ForEach(CoachProviderMode.allCases) { mode in
-                        Text(mode.label).tag(mode)
+            SettingsGroup(header: "Provider") {
+                FormMenuRow(title: "Provider", value: store.settings.providerMode.label) {
+                    Picker("Provider", selection: providerBinding) {
+                        ForEach(CoachProviderMode.allCases) { mode in
+                            Text(mode.label).tag(mode)
+                        }
                     }
                 }
-            }
 
-            // On-device has a single fixed model and runs only on-device (no
-            // cloud backup) — show a privacy/availability card instead of a
-            // model picker.
-            if store.settings.providerMode == .appleOnDevice {
-                appleOnDeviceCard
-            } else {
-                SettingsMenuRow(title: "Model", value: currentModelLabel) {
-                    Picker("Model", selection: modelPickerBinding) {
-                        switch store.settings.providerMode {
-                        case .userGeminiKey:
-                            ForEach(GeminiModel.allCases) { model in
-                                Text(model.label).tag(model.rawValue)
-                            }
-                        case .userOpenRouterKey:
-                            ForEach(OpenRouterModel.allCases) { model in
-                                Text(model.label).tag(model.rawValue)
-                            }
-                            Text("Custom…").tag(customModelTag)
-                        case .userMiniMaxKey:
-                            ForEach(MiniMaxModel.allCases) { model in
-                                Text(model.label).tag(model.rawValue)
-                            }
-                        default:
-                            ForEach(CoachModel.allCases) { model in
-                                Text(model.label).tag(model.rawValue)
+                // On-device has a single fixed model and runs only on-device (no
+                // cloud backup) — show a privacy/availability card instead of a
+                // model picker.
+                if store.settings.providerMode == .appleOnDevice {
+                    appleOnDeviceCard
+                } else {
+                    FormMenuRow(title: "Model", value: currentModelLabel) {
+                        Picker("Model", selection: modelPickerBinding) {
+                            switch store.settings.providerMode {
+                            case .userGeminiKey:
+                                ForEach(GeminiModel.allCases) { model in
+                                    Text(model.label).tag(model.rawValue)
+                                }
+                            case .userOpenRouterKey:
+                                ForEach(OpenRouterModel.allCases) { model in
+                                    Text(model.label).tag(model.rawValue)
+                                }
+                                Text("Custom…").tag(customModelTag)
+                            case .userMiniMaxKey:
+                                ForEach(MiniMaxModel.allCases) { model in
+                                    Text(model.label).tag(model.rawValue)
+                                }
+                            default:
+                                ForEach(CoachModel.allCases) { model in
+                                    Text(model.label).tag(model.rawValue)
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            if store.settings.providerMode == .userOpenRouterKey, isCustomOpenRouterModel {
-                customModelField
+                if store.settings.providerMode == .userOpenRouterKey, isCustomOpenRouterModel {
+                    customModelField
+                }
             }
 
             // The key field tracks the *effective* provider — the active cloud
@@ -209,58 +213,63 @@ struct CoachSettingsSection: View {
                 )
             }
 
-            // Web search is provider-hosted. MiniMax's API exposes no web search,
-            // and the on-device model is tool-less — so the toggle is only offered
-            // for providers that can actually search.
-            if store.settings.providerMode != .appleOnDevice,
-               store.settings.providerMode != .userMiniMaxKey {
-                SettingsToggleRow(title: "Web search", isOn: webSearchBinding)
-            }
-
             // OpenRouter-only routing controls. OpenRouter exposes a unified
             // reasoning-effort hint plus provider-level privacy and sort options
             // the native OpenAI/Gemini clients don't, so they only appear here.
             if store.settings.providerMode == .userOpenRouterKey {
-                SettingsLabeledRow(title: "Reasoning") {
-                    Picker("Reasoning", selection: reasoningEffortBinding) {
-                        Text("Default").tag("")
-                        Text("Low").tag("low")
-                        Text("Medium").tag("medium")
-                        Text("High").tag("high")
+                SettingsGroup(header: "Routing") {
+                    FormValueRow(title: "Reasoning") {
+                        Picker("Reasoning", selection: reasoningEffortBinding) {
+                            Text("Default").tag("")
+                            Text("Low").tag("low")
+                            Text("Medium").tag("medium")
+                            Text("High").tag("high")
+                        }
+                        .pickerStyle(.menu)
+                        .tint(PulseColors.accent)
                     }
-                    .pickerStyle(.menu)
-                    .tint(PulseColors.accent)
-                }
 
-                SettingsToggleRow(title: "Privacy routing", isOn: privacyRoutingBinding)
+                    FormToggleRow(title: "Privacy routing", isOn: privacyRoutingBinding)
 
-                SettingsLabeledRow(title: "Provider sort") {
-                    Picker("Provider sort", selection: providerSortBinding) {
-                        Text("Default").tag("")
-                        Text("Price").tag("price")
-                        Text("Throughput").tag("throughput")
-                        Text("Latency").tag("latency")
+                    FormValueRow(title: "Provider sort") {
+                        Picker("Provider sort", selection: providerSortBinding) {
+                            Text("Default").tag("")
+                            Text("Price").tag("price")
+                            Text("Throughput").tag("throughput")
+                            Text("Latency").tag("latency")
+                        }
+                        .pickerStyle(.menu)
+                        .tint(PulseColors.accent)
                     }
-                    .pickerStyle(.menu)
-                    .tint(PulseColors.accent)
                 }
             }
 
-            SettingsToggleRow(title: "AI actions (set goals, log, edit)", isOn: writeToolsBinding)
-            SettingsToggleRow(title: "Live ring measurements", isOn: liveMeasurementsBinding)
-            if showsImageInputToggle {
-                SettingsToggleRow(title: "Image input (attach photos)", isOn: imageInputBinding)
+            SettingsGroup(header: "Capabilities") {
+                // Web search is provider-hosted. MiniMax's API exposes no web search,
+                // and the on-device model is tool-less — so the toggle is only offered
+                // for providers that can actually search.
+                if store.settings.providerMode != .appleOnDevice,
+                   store.settings.providerMode != .userMiniMaxKey {
+                    FormToggleRow(title: "Web search", isOn: webSearchBinding)
+                }
+
+                FormToggleRow(title: "AI actions (set goals, log, edit)", isOn: writeToolsBinding)
+                FormToggleRow(title: "Live ring measurements", isOn: liveMeasurementsBinding)
+                if showsImageInputToggle {
+                    FormToggleRow(title: "Image input (attach photos)", isOn: imageInputBinding)
+                }
             }
 
             if !memories.isEmpty {
-                SectionHeader(title: "Coach memory", action: nil)
-                ForEach(memories) { memory in memoryRow(memory) }
+                SettingsGroup(header: "Coach memory") {
+                    ForEach(memories) { memory in memoryRow(memory) }
+                }
             }
         }
     }
 
     private func memoryRow(_ memory: CoachMemory) -> some View {
-        SettingsCard(cornerRadius: 16, padding: 14) {
+        FormField(padding: 14) {
             HStack(alignment: .top, spacing: 10) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(memory.key)
@@ -299,7 +308,8 @@ struct CoachSettingsSection: View {
         onSave: @escaping () -> Void,
         onRemove: @escaping () -> Void
     ) -> some View {
-        SettingsCard(cornerRadius: 20) {
+        SettingsGroup {
+            FormField {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 8) {
                     Group {
@@ -340,6 +350,7 @@ struct CoachSettingsSection: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
         .onAppear(perform: refreshKeyState)
     }
@@ -350,7 +361,7 @@ struct CoachSettingsSection: View {
     /// Replaces the model picker (the model is fixed) and explains the v1 limits.
     private var appleOnDeviceCard: some View {
         let availability = AppleOnDeviceAvailability.current
-        return SettingsCard(cornerRadius: 20) {
+        return FormField {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 8) {
                     Image(systemName: availability.isAvailable ? "lock.iphone" : "exclamationmark.triangle")
@@ -376,7 +387,7 @@ struct CoachSettingsSection: View {
     // MARK: - Custom OpenRouter model field
 
     private var customModelField: some View {
-        SettingsCard(cornerRadius: 20) {
+        FormField {
             VStack(alignment: .leading, spacing: 8) {
                 TextField("vendor/model-slug", text: modelBinding)
                     .textInputAutocapitalization(.never)

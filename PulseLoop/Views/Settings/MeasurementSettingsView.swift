@@ -28,7 +28,7 @@ struct MeasurementSettingsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 16) {
+            VStack(alignment: .leading, spacing: 22) {
                 if supportsInterval {
                     content
                 } else {
@@ -48,22 +48,22 @@ struct MeasurementSettingsView: View {
 
     @ViewBuilder
     private var content: some View {
-        SectionHeader(title: "Heart rate", action: nil)
-        SettingsToggleRow(title: "All-day heart rate", isOn: $hrEnabled)
-        if hrEnabled {
-            hrIntervalCard
+        SettingsGroup(header: "Heart rate") {
+            FormToggleRow(title: "All-day heart rate", isOn: $hrEnabled)
+            if hrEnabled {
+                hrIntervalCard
+            }
         }
 
-        SectionHeader(title: "Other vitals", action: nil)
-        Text("These vitals are recorded in the background throughout the day. The ring doesn't expose a separate interval for them, so each is a simple on/off.")
-            .font(PulseFont.caption.weight(.regular))
-            .foregroundStyle(PulseColors.textMuted)
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-        if capabilities.contains(.spo2) { SettingsToggleRow(title: "Blood oxygen (SpO₂)", isOn: $spo2Enabled) }
-        if capabilities.contains(.stress) { SettingsToggleRow(title: "Stress", isOn: $stressEnabled) }
-        if capabilities.contains(.hrv) { SettingsToggleRow(title: "HRV", isOn: $hrvEnabled) }
-        if capabilities.contains(.temperature) { SettingsToggleRow(title: "Skin temperature", isOn: $temperatureEnabled) }
+        SettingsGroup(
+            header: "Other vitals",
+            footer: "These vitals are recorded in the background throughout the day. The ring doesn't expose a separate interval for them, so each is a simple on/off."
+        ) {
+            if capabilities.contains(.spo2) { FormToggleRow(title: "Blood oxygen (SpO₂)", isOn: $spo2Enabled) }
+            if capabilities.contains(.stress) { FormToggleRow(title: "Stress", isOn: $stressEnabled) }
+            if capabilities.contains(.hrv) { FormToggleRow(title: "HRV", isOn: $hrvEnabled) }
+            if capabilities.contains(.temperature) { FormToggleRow(title: "Skin temperature", isOn: $temperatureEnabled) }
+        }
 
         PrimaryButton(title: "Save & sync to ring", systemImage: "checkmark") { save() }
 
@@ -77,7 +77,7 @@ struct MeasurementSettingsView: View {
     }
 
     private var hrIntervalCard: some View {
-        SettingsCard(cornerRadius: 16) {
+        FormField {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Text("Measure every").font(PulseFont.subheadline).foregroundStyle(PulseColors.textPrimary)

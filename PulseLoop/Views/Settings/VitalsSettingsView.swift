@@ -25,25 +25,20 @@ struct MetricPrefsSettingsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 16) {
-                SectionHeader(title: "Visible tiles", action: nil)
-                Text(visibilityBlurb)
-                    .font(PulseFont.caption.weight(.regular))
-                    .foregroundStyle(PulseColors.textMuted)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                ForEach(supported, id: \.metric) { item in
-                    visibilityRow(item.metric, label: item.label, color: item.color)
+            VStack(alignment: .leading, spacing: 22) {
+                SettingsGroup(header: "Visible tiles", footer: visibilityBlurb) {
+                    ForEach(supported, id: \.metric) { item in
+                        visibilityRow(item.metric, label: item.label, color: item.color)
+                    }
                 }
 
-                SectionHeader(title: "Chart detail", action: nil)
-                Text("When the ring measures often, charts can look busy. Smoother levels average nearby points into a cleaner line — "
-                     + "this only changes the display on this page, not your stored data.")
-                    .font(PulseFont.caption.weight(.regular))
-                    .foregroundStyle(PulseColors.textMuted)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                resolutionCard
+                SettingsGroup(
+                    header: "Chart detail",
+                    footer: "When the ring measures often, charts can look busy. Smoother levels average nearby points into a cleaner line — "
+                        + "this only changes the display on this page, not your stored data."
+                ) {
+                    resolutionCard
+                }
             }
             .padding()
         }
@@ -52,7 +47,7 @@ struct MetricPrefsSettingsView: View {
     }
 
     private var resolutionCard: some View {
-        SettingsCard(cornerRadius: 16) {
+        FormField {
             VStack(alignment: .leading, spacing: 10) {
                 Picker("Resolution", selection: Binding(
                     get: { store.resolution(for: scope) },
@@ -71,18 +66,17 @@ struct MetricPrefsSettingsView: View {
     }
 
     private func visibilityRow(_ metric: MetricKey, label: String, color: Color) -> some View {
-        SettingsCard(cornerRadius: 16, padding: 0) {
-        Toggle(isOn: Binding(
-            get: { !store.isHidden(metric, scope: scope) },
-            set: { store.setHidden(metric, !$0, scope: scope) }
-        )) {
-            HStack(spacing: 10) {
-                Circle().fill(color).frame(width: 8, height: 8)
-                Text(label).font(PulseFont.subheadline).foregroundStyle(PulseColors.textPrimary)
+        FormField {
+            Toggle(isOn: Binding(
+                get: { !store.isHidden(metric, scope: scope) },
+                set: { store.setHidden(metric, !$0, scope: scope) }
+            )) {
+                HStack(spacing: 10) {
+                    Circle().fill(color).frame(width: 8, height: 8)
+                    Text(label).font(PulseFont.subheadline).foregroundStyle(PulseColors.textPrimary)
+                }
             }
-        }
-        .tint(PulseColors.accent)
-        .padding(.horizontal, 16).padding(.vertical, 8)
+            .tint(PulseColors.accent)
         }
     }
 }

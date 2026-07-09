@@ -10,19 +10,16 @@ struct PrivacyDataSettingsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 16) {
-                SectionHeader(title: "Your data stays on device", action: nil)
+            VStack(alignment: .leading, spacing: 22) {
                 StatusCopy(
                     title: "Local-first",
                     body: "Ring data is stored only on this device. Nothing is uploaded except a Coach question you choose to send."
                 )
 
-                SectionHeader(title: "Export", action: nil)
                 SecondaryButton(title: "Export diagnostics", systemImage: "square.and.arrow.up") {
                     diagnosticsURL = DiagnosticsExporter.exportFile(context: modelContext)
                 }
 
-                SectionHeader(title: "Demo data", action: nil)
                 SecondaryButton(title: "Clear demo data", systemImage: "trash") {
                     SeedData.clearAll(modelContext)
                     let fresh = UserProfile()

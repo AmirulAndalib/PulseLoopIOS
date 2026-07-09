@@ -19,8 +19,7 @@ struct NotificationsSettingsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 16) {
-                SectionHeader(title: "Daily check-ins", action: nil)
+            VStack(alignment: .leading, spacing: 22) {
                 if !coachEnabled {
                     StatusCopy(
                         title: "AI Coach is off",
@@ -46,49 +45,55 @@ struct NotificationsSettingsView: View {
     }
 
     @ViewBuilder private var batteryAlertControls: some View {
-        SectionHeader(title: "Ring battery alerts", action: nil)
-        SettingsToggleRow(title: "Low battery notifications", isOn: Binding(
-            get: { batteryAlertsEnabled },
-            set: { setBatteryAlerts($0) }
-        ))
-        Text("Get a heads-up when your ring drops below 20% and 10%.")
-            .font(.caption).foregroundStyle(PulseColors.textMuted)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 4)
+        SettingsGroup(
+            header: "Ring battery alerts",
+            footer: "Get a heads-up when your ring drops below 20% and 10%."
+        ) {
+            FormToggleRow(title: "Low battery notifications", isOn: Binding(
+                get: { batteryAlertsEnabled },
+                set: { setBatteryAlerts($0) }
+            ))
+        }
     }
 
     @ViewBuilder private var notificationsControls: some View {
-        SettingsToggleRow(title: "Daily check-in notifications", isOn: Binding(
-            get: { store.settings.notificationsEnabled },
-            set: { setNotifications($0) }
-        ))
+        SettingsGroup(header: "Daily check-ins") {
+            FormToggleRow(title: "Daily check-in notifications", isOn: Binding(
+                get: { store.settings.notificationsEnabled },
+                set: { setNotifications($0) }
+            ))
+            if store.settings.notificationsEnabled {
+                FormValueRow(title: "Morning") { hourPicker(hourBinding(\.morningHour)) }
+                FormValueRow(title: "Midday") { hourPicker(hourBinding(\.middayHour)) }
+                FormValueRow(title: "Evening") { hourPicker(hourBinding(\.eveningHour)) }
+            }
+        }
 
         if store.settings.notificationsEnabled {
-            SettingsLabeledRow(title: "Morning") { hourPicker(hourBinding(\.morningHour)) }
-            SettingsLabeledRow(title: "Midday") { hourPicker(hourBinding(\.middayHour)) }
-            SettingsLabeledRow(title: "Evening") { hourPicker(hourBinding(\.eveningHour)) }
             QuickActionButton(label: "Send a test check-in now") { sendTestCheckin() }
             if let testStatus {
                 Text(testStatus).font(.caption).foregroundStyle(PulseColors.textMuted)
+                    .padding(.horizontal, 4)
             }
 
             // Proactive anomaly alerts — on-device only (free/private local
             // inference makes "watch the stream and speak up" practical).
-            SectionHeader(title: "Proactive alerts", action: nil)
-            SettingsToggleRow(title: "Anomaly heads-ups (on-device)", isOn: Binding(
-                get: { store.settings.proactiveAlertsEnabled },
-                set: { store.settings.proactiveAlertsEnabled = $0 }
-            ))
-            Text(store.settings.providerMode == .appleOnDevice
-                 ? "When something looks off (low SpO₂, short sleep), I'll send a calm heads-up — generated privately on your iPhone."
-                 : "Requires the On-device (Apple) provider. Switch to it in AI Coach settings to enable.")
-                .font(.caption).foregroundStyle(PulseColors.textMuted)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 4)
+            SettingsGroup(
+                header: "Proactive alerts",
+                footer: store.settings.providerMode == .appleOnDevice
+                    ? "When something looks off (low SpO₂, short sleep), I'll send a calm heads-up — generated privately on your iPhone."
+                    : "Requires the On-device (Apple) provider. Switch to it in AI Coach settings to enable."
+            ) {
+                FormToggleRow(title: "Anomaly heads-ups (on-device)", isOn: Binding(
+                    get: { store.settings.proactiveAlertsEnabled },
+                    set: { store.settings.proactiveAlertsEnabled = $0 }
+                ))
+            }
         }
         if notifPermissionDenied {
             Text("Notifications are disabled for PulseLoop in iOS Settings.")
                 .font(.caption).foregroundStyle(PulseColors.danger)
+                .padding(.horizontal, 4)
         }
     }
 

@@ -5,77 +5,59 @@ struct ProfileEditorView: View {
     @State private var activePicker: ProfilePickerKind?
 
     var body: some View {
-        VStack(spacing: 16) {
-            SectionHeader(title: "Units", action: nil)
-            formCard {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Measurement units")
-                        .font(PulseFont.subheadline)
+        VStack(alignment: .leading, spacing: 22) {
+            SettingsGroup(header: "Identity") {
+                FormValueRow(title: "Name") {
+                    TextField("Optional", text: $draft.name)
+                        .textInputAutocapitalization(.words)
+                        .multilineTextAlignment(.trailing)
                         .foregroundStyle(PulseColors.textPrimary)
-                    Picker("Measurement units", selection: $draft.units) {
-                        ForEach(UnitsPreference.allCases, id: \.self) { units in
-                            Text(units.label).tag(units)
-                        }
+                }
+            }
+
+            SettingsGroup(header: "Sex", footer: "Optional") {
+                FormField {
+                    Picker("Sex", selection: $draft.sex) {
+                        Text("Not set").tag(String?.none)
+                        Text("Male").tag(String?.some("male"))
+                        Text("Female").tag(String?.some("female"))
+                        Text("Other").tag(String?.some("other"))
                     }
                     .pickerStyle(.segmented)
                 }
             }
 
-            SectionHeader(title: "Identity", action: nil)
-            formCard {
-                VStack(spacing: 0) {
-                    HStack(spacing: 12) {
-                        Text("Name")
-                            .font(PulseFont.subheadline)
-                            .foregroundStyle(PulseColors.textPrimary)
-                        Spacer()
-                        TextField("Optional", text: $draft.name)
-                            .textInputAutocapitalization(.words)
-                            .multilineTextAlignment(.trailing)
-                            .foregroundStyle(PulseColors.textPrimary)
-                    }
-                    .frame(minHeight: 44)
-
-                    Divider().overlay(PulseColors.borderSubtle)
-
-                    HStack(spacing: 12) {
-                        Text("Sex")
-                            .font(PulseFont.subheadline)
-                            .foregroundStyle(PulseColors.textPrimary)
-                        Spacer(minLength: 8)
-                        Picker("Sex", selection: $draft.sex) {
-                            Text("Not set").tag(String?.none)
-                            Text("Female").tag(String?.some("female"))
-                            Text("Male").tag(String?.some("male"))
-                            Text("Other").tag(String?.some("other"))
-                        }
-                        .pickerStyle(.segmented)
-                        .frame(maxWidth: 300)
-                    }
-                    .padding(.vertical, 10)
-                }
+            SettingsGroup(header: "Body metrics", footer: "Optional") {
+                pickerRow(
+                    title: "Age",
+                    value: draft.age.map { "\($0) years" },
+                    kind: .age
+                )
+                pickerRow(
+                    title: "Height",
+                    value: heightLabel,
+                    kind: .height
+                )
+                pickerRow(
+                    title: "Weight",
+                    value: weightLabel,
+                    kind: .weight
+                )
             }
 
-            SectionHeader(title: "Body metrics", action: "Optional")
-            formCard {
-                VStack(spacing: 0) {
-                    pickerRow(
-                        title: "Age",
-                        value: draft.age.map { "\($0) years" },
-                        kind: .age
-                    )
-                    Divider().overlay(PulseColors.borderSubtle)
-                    pickerRow(
-                        title: "Height",
-                        value: heightLabel,
-                        kind: .height
-                    )
-                    Divider().overlay(PulseColors.borderSubtle)
-                    pickerRow(
-                        title: "Weight",
-                        value: weightLabel,
-                        kind: .weight
-                    )
+            SettingsGroup(header: "Measurement") {
+                FormField {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Measurement units")
+                            .font(PulseFont.subheadline)
+                            .foregroundStyle(PulseColors.textPrimary)
+                        Picker("Measurement units", selection: $draft.units) {
+                            ForEach(UnitsPreference.allCases, id: \.self) { units in
+                                Text(units.label).tag(units)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                    }
                 }
             }
         }
@@ -95,22 +77,13 @@ struct ProfileEditorView: View {
         return "\(LocalizedDecimalInput.format(value)) \(draft.units == .metric ? "kg" : "lb")"
     }
 
-    private func formCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        SettingsCard(cornerRadius: 18, padding: 0) {
-            content()
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
     private func pickerRow(title: String, value: String?, kind: ProfilePickerKind) -> some View {
         Button {
             activePicker = kind
         } label: {
             HStack(spacing: 12) {
                 Text(title)
-                    .font(PulseFont.subheadline)
+                    .font(PulseFont.body)
                     .foregroundStyle(PulseColors.textPrimary)
                 Spacer()
                 Text(value ?? "Not set")
@@ -120,6 +93,7 @@ struct ProfileEditorView: View {
                     .font(PulseFont.caption2.weight(.semibold))
                     .foregroundStyle(PulseColors.textMuted)
             }
+            .padding(.horizontal, 16)
             .frame(minHeight: 50)
             .contentShape(Rectangle())
         }

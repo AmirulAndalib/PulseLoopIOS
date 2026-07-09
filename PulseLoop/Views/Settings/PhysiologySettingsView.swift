@@ -29,37 +29,36 @@ struct PhysiologySettingsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 16) {
-                SectionHeader(title: "Fitness", action: nil)
-                SettingsLabeledRow(title: "Athlete mode") {
-                    Toggle("", isOn: $athleteMode).labelsHidden().tint(PulseColors.accent)
+            VStack(alignment: .leading, spacing: 22) {
+                SettingsGroup(
+                    header: "Fitness",
+                    footer: "Treats a low resting heart rate as a sign of fitness rather than a concern, and relaxes the low-HR threshold."
+                ) {
+                    FormToggleRow(title: "Athlete mode", isOn: $athleteMode)
                 }
-                Text("Treats a low resting heart rate as a sign of fitness rather than a concern, and relaxes the low-HR threshold.")
-                    .font(PulseFont.caption.weight(.regular)).foregroundStyle(PulseColors.textMuted)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 4)
 
-                SectionHeader(title: "Environment", action: nil)
-                numberCard(units == .metric ? "Typical altitude (m)" : "Typical altitude (ft)", text: $altitudeText)
-                Text("Above ~2000 m, normal blood-oxygen readings run lower. We use this to avoid false low-oxygen warnings.")
-                    .font(PulseFont.caption.weight(.regular)).foregroundStyle(PulseColors.textMuted)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 4)
+                SettingsGroup(
+                    header: "Environment",
+                    footer: "Above ~2000 m, normal blood-oxygen readings run lower. We use this to avoid false low-oxygen warnings."
+                ) {
+                    numberField(units == .metric ? "Typical altitude (m)" : "Typical altitude (ft)", text: $altitudeText)
+                }
 
-                SectionHeader(title: "Health context", action: nil)
-                triStateCard("Beta-blockers", selection: $betaBlockers)
-                triStateCard("Known lung condition", selection: $lungCondition)
-                Text("Optional. Both can change what's expected for your heart rate or oxygen, so we adjust labels instead of alarming.")
-                    .font(PulseFont.caption.weight(.regular)).foregroundStyle(PulseColors.textMuted)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 4)
+                SettingsGroup(
+                    header: "Health context",
+                    footer: "Optional. Both can change what's expected for your heart rate or oxygen, so we adjust labels instead of alarming."
+                ) {
+                    triStateRow("Beta-blockers", selection: $betaBlockers)
+                    triStateRow("Known lung condition", selection: $lungCondition)
+                }
 
-                SectionHeader(title: "Units", action: nil)
-                SettingsLabeledRow(title: "Glucose unit") {
-                    Picker("Glucose unit", selection: $glucoseUnit) {
-                        ForEach(GlucoseUnit.allCases) { Text($0.label).tag($0) }
+                SettingsGroup(header: "Units") {
+                    FormValueRow(title: "Glucose unit") {
+                        Picker("Glucose unit", selection: $glucoseUnit) {
+                            ForEach(GlucoseUnit.allCases) { Text($0.label).tag($0) }
+                        }
+                        .pickerStyle(.segmented)
                     }
-                    .pickerStyle(.segmented)
                 }
 
                 PrimaryButton(title: "Save", systemImage: "checkmark") { save() }
@@ -74,23 +73,18 @@ struct PhysiologySettingsView: View {
 
     // MARK: - Cards
 
-    private func numberCard(_ title: String, text: Binding<String>) -> some View {
-        SettingsCard(cornerRadius: 16, padding: 0) {
-            HStack {
-                Text(title).font(PulseFont.subheadline).foregroundStyle(PulseColors.textPrimary)
-                Spacer()
-                TextField("0", text: text)
-                    .keyboardType(.numberPad)
-                    .multilineTextAlignment(.trailing)
-                    .foregroundStyle(PulseColors.textPrimary)
-                    .frame(maxWidth: 90)
-            }
-            .padding(.horizontal, 16).padding(.vertical, 12)
+    private func numberField(_ title: String, text: Binding<String>) -> some View {
+        FormValueRow(title: title) {
+            TextField("0", text: text)
+                .keyboardType(.numberPad)
+                .multilineTextAlignment(.trailing)
+                .foregroundStyle(PulseColors.textPrimary)
+                .frame(maxWidth: 90)
         }
     }
 
-    private func triStateCard(_ title: String, selection: Binding<TriState>) -> some View {
-        SettingsLabeledRow(title: title) {
+    private func triStateRow(_ title: String, selection: Binding<TriState>) -> some View {
+        FormValueRow(title: title) {
             Picker(title, selection: selection) {
                 ForEach(TriState.allCases) { Text($0.label).tag($0) }
             }
