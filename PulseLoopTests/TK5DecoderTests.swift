@@ -273,6 +273,7 @@ final class TK5DecoderTests: XCTestCase {
 @MainActor
 final class TK5HistorySyncTests: XCTestCase {
     private final class FakeWriter: RingCommandWriter {
+        nonisolated deinit {}   // skip the main-actor isolated-deinit hop (crashes on older sim runtimes)
         var sent: [Data] = []
         func enqueue(_ command: Data) { sent.append(command) }
     }
