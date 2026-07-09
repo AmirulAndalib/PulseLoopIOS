@@ -4,6 +4,7 @@ import SwiftData
 struct TodayView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(RingSyncCoordinator.self) private var coordinator
+    @Environment(\.zoomNamespace) private var zoomNS
     @Query(filter: #Predicate<CoachSummary> { $0.kind == "today" }, sort: \CoachSummary.updatedAt, order: .reverse)
     private var todaySummaries: [CoachSummary]
     @Query private var profiles: [UserProfile]
@@ -51,10 +52,10 @@ struct TodayView: View {
                             chips: coachSummary.chips
                         )
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.pulseTap)
                 } else if coachEnabled {
                     // Coach on but no summary generated yet: offer the chat entry point.
-                    Button { selectedTab = .coach } label: {
+                    Button { CoachNavigation.shared.openRoot() } label: {
                         CoachMessageCard(
                             headline: summary.calibration.isCalibrating ? "Baseline in progress" : "Want a recap?",
                             body: summary.calibration.isCalibrating
@@ -63,7 +64,7 @@ struct TodayView: View {
                             chips: []
                         )
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.pulseTap)
                 } else {
                     HeroInsightCardView(title: hero.title, summary: hero.summary, chips: hero.chips)
                 }
@@ -77,6 +78,7 @@ struct TodayView: View {
         }
         .background(PulseColors.background)
         .refreshable { await coordinator.pullToRefresh() }
+        .pulseScrollEdges()
         .task {
             ensureStore()
             if isActive { store?.updateProfile(profile) }
@@ -134,6 +136,7 @@ struct TodayView: View {
             TodayChartTile(model: model, profile: physiology, baseline: baseline, showPoints: showPoints) {
                 path.append(AppRoute.metricDetail(metric))
             }
+            .pulseZoomSource(AppRoute.metricDetail(metric), in: zoomNS)
         }
     }
 
@@ -141,6 +144,7 @@ struct TodayView: View {
     private func gaugeTile(_ store: TodayStore, _ metric: MetricKind) -> some View {
         if let model = store.cards[metric] {
             TodayGaugeTile(model: model) { path.append(AppRoute.metricDetail(metric)) }
+                .pulseZoomSource(AppRoute.metricDetail(metric), in: zoomNS)
         }
     }
 
@@ -155,6 +159,7 @@ struct TodayView: View {
                 diastolicZones: VitalsThresholdEngine.diastolicReferenceZones(),
                 onTap: { path.append(AppRoute.metricDetail(.bloodPressure)) }
             )
+            .pulseZoomSource(AppRoute.metricDetail(.bloodPressure), in: zoomNS)
         }
     }
 }
