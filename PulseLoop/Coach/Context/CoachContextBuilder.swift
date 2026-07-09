@@ -56,7 +56,11 @@ enum CoachContextBuilder {
 
         let week = CoachContextPacket.WeekContext(
             daysAvailable: daysAvailable,
-            avgSteps: weekSteps.isEmpty ? nil : weekSteps.reduce(0, +) / weekSteps.count,
+            // Average over days that actually have data, not the fixed 7 week-slots — `steps7d`
+            // zero-fills missing days, so dividing by `weekSteps.count` (always 7) understates the
+            // average (e.g. 8,000 steps on Monday → 1,142 instead of 8,000). Keeps avgSteps
+            // consistent with `daysAvailable` / `totalSteps`.
+            avgSteps: daysAvailable == 0 ? nil : weekSteps.reduce(0, +) / daysAvailable,
             totalSteps: weekSteps.isEmpty ? nil : weekSteps.reduce(0, +),
             activeMinutesTotal: nil,
             exerciseDays: daysAvailable,
