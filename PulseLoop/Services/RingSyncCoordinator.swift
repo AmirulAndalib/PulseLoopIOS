@@ -40,13 +40,14 @@ final class RingSyncCoordinator {
     /// Everything a single combined sweep produced. Fields the ring didn't compute stay `nil` — on the
     /// jring, stress/HRV/blood sugar come back as zero and are simply not shown.
     struct VitalsReading: Equatable, Sendable {
-        var heartRate: Int? = nil
-        var bloodPressure: BloodPressureReading? = nil
-        var spo2: Int? = nil
-        var fatigue: Int? = nil
-        var stress: Int? = nil
-        var hrv: Int? = nil
-        var bloodSugarMgdl: Double? = nil
+        // Optional `var`s already default to `nil` in the synthesized memberwise init.
+        var heartRate: Int?
+        var bloodPressure: BloodPressureReading?
+        var spo2: Int?
+        var fatigue: Int?
+        var stress: Int?
+        var hrv: Int?
+        var bloodSugarMgdl: Double?
 
         var isEmpty: Bool {
             heartRate == nil && bloodPressure == nil && spo2 == nil

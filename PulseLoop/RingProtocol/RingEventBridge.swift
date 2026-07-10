@@ -70,13 +70,7 @@ enum RingEventBridge {
             return [.spo2Complete(timestamp: timestamp)]
 
         case let .historyMeasurement(kind, value, timestamp):
-            if kind == .heartRate, !hrRange.contains(Int(value)) { return [] }
-            // A ring's on-device log can still hold records stamped under a *previous* clock — e.g. a
-            // jring that logged against a UTC RTC before the app started setting it to local time. Those
-            // decode hours into the future. Drop anything outside the history horizon rather than
-            // persisting a sample that poisons "today", peak HR and the 24h trends.
-            guard isWithinHistoryWindow(timestamp, now: now) else { return [] }
-            return [.historyMeasurement(kind: kind, value: value, timestamp: timestamp)]
+            return historyMeasurementEvents(kind: kind, value: value, timestamp: timestamp, now: now)
 
         case let .stressSample(value, timestamp):
             guard stressRange.contains(value) else { return [] }
@@ -120,6 +114,23 @@ enum RingEventBridge {
     /// Fan-out for the jring/56ff 0x24 extra metrics (BP, fatigue, blood sugar) and firmware, with the
     /// same plausibility gating as the main vitals. Split from `events` so neither switch grows past
     /// the project's cyclomatic-complexity limit.
+    /// Gate a ring-supplied history sample before it reaches persistence.
+    ///
+    /// A ring's on-device log can still hold records stamped under a *previous* clock — e.g. a jring
+    /// that logged against a UTC RTC before the app started setting it to local time. Those decode
+    /// hours into the future. Drop anything outside the history horizon rather than persisting a
+    /// sample that poisons "today", peak HR and the 24h trends.
+    private static func historyMeasurementEvents(
+        kind: MeasurementKind,
+        value: Double,
+        timestamp: Date,
+        now: Date
+    ) -> [PulseEvent] {
+        if kind == .heartRate, !hrRange.contains(Int(value)) { return [] }
+        guard isWithinHistoryWindow(timestamp, now: now) else { return [] }
+        return [.historyMeasurement(kind: kind, value: value, timestamp: timestamp)]
+    }
+
     private static func extraMetricEvents(for decoded: RingDecodedEvent) -> [PulseEvent] {
         switch decoded {
         case let .bloodPressureSample(systolic, diastolic, timestamp):
