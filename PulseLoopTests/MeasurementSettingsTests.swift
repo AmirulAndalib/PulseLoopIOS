@@ -56,9 +56,29 @@ final class MeasurementSettingsTests: XCTestCase {
 
     // MARK: - Capability gating
 
-    func testMeasurementIntervalIsColmiOnly() {
+    /// Colmi configures its interval via the 0x16 pref; jring via byte [6] of its 0x19 background
+    /// monitoring command. TK5 has no interval command.
+    func testMeasurementIntervalCapabilityPerDevice() {
         XCTAssertTrue(ColmiCoordinator().capabilities.contains(.measurementInterval))
-        XCTAssertFalse(JringCoordinator().capabilities.contains(.measurementInterval))
+        XCTAssertTrue(JringCoordinator().capabilities.contains(.measurementInterval))
+        XCTAssertFalse(TK5Coordinator().capabilities.contains(.measurementInterval))
+    }
+
+    /// Only the jring can be *asked* for a blood-pressure reading (0x23 mode 1). The TK5 reports BP
+    /// from its live stream but has no on-demand BP command, and Colmi has no BP sensor at all.
+    func testManualBloodPressureIsJringOnly() {
+        XCTAssertTrue(JringCoordinator().capabilities.contains(.manualBloodPressure))
+        XCTAssertFalse(TK5Coordinator().capabilities.contains(.manualBloodPressure))
+        XCTAssertFalse(ColmiCoordinator().capabilities.contains(.manualBloodPressure))
+        XCTAssertFalse(ColmiCoordinator().capabilities.contains(.bloodPressure))
+    }
+
+    /// Only the jring's PPG sweep returns every vital in one packet, so only it collapses the Vitals
+    /// measure row into a single "Measure Vitals" action.
+    func testCombinedVitalsMeasurementIsJringOnly() {
+        XCTAssertTrue(JringCoordinator().capabilities.contains(.combinedVitalsMeasurement))
+        XCTAssertFalse(ColmiCoordinator().capabilities.contains(.combinedVitalsMeasurement))
+        XCTAssertFalse(TK5Coordinator().capabilities.contains(.combinedVitalsMeasurement))
     }
 
     // MARK: - Vital visibility (capability first, then user opt-out)

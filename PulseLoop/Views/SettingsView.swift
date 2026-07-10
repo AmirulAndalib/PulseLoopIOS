@@ -80,9 +80,9 @@ struct SettingsView: View {
                 path.append(AppRoute.settingsPhysiology)
             }
         ]
-        // Measurement frequency configures the ring's sampling interval — only rings that expose
-        // `.measurementInterval` (Colmi) declare it, so the generic 56ff jring never shows this row.
-        // Sits under Physiology, above the AI Coach.
+        // Measurement frequency configures the ring's sampling interval — shown only for rings that
+        // declare `.measurementInterval` (Colmi's 0x16 pref, jring's 0x19 background-monitoring
+        // cadence). Sits under Physiology, above the AI Coach.
         if caps.contains(.measurementInterval) {
             rows.append(SettingsRowItem(icon: "timer", tint: PulseColors.spo2, title: "Measurement Frequency") {
                 path.append(AppRoute.settingsMeasurement)
