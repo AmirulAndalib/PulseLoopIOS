@@ -121,27 +121,36 @@ final class PairingMatchingTests: XCTestCase {
     /// The R99 rows are the point of the whole exercise: the owner's ring (`R99 54DC`) has to land on
     /// `.colmiSmartHealth` from its *name alone*, because its advertisement is the one thing the nRF
     /// capture didn't record.
+    /// One row of the cross-claim matrix. A struct rather than a tuple: four anonymous members read as
+    /// noise at the call site, and the labels are the whole point of the table.
+    private struct ClaimCase {
+        let label: String
+        let name: String?
+        let advertisement: AdvertisementInfo
+        let expected: RingDeviceType?
+    }
+
     func testRegistryCrossClaimMatrix() {
-        let cases: [(String, String?, AdvertisementInfo, RingDeviceType?)] = [
-            ("jring", "SMART_RING", noAdv, .jring),
-            ("QRing-Colmi advertising its service", "R09_00AA", qringAdv, .colmiR02),
-            ("QRing-Colmi with a bare advertisement", "R09_00AA", noAdv, .colmiR02),
+        let cases: [ClaimCase] = [
+            ClaimCase(label: "jring", name: "SMART_RING", advertisement: noAdv, expected: .jring),
+            ClaimCase(label: "QRing-Colmi advertising its service", name: "R09_00AA", advertisement: qringAdv, expected: .colmiR02),
+            ClaimCase(label: "QRing-Colmi with a bare advertisement", name: "R09_00AA", advertisement: noAdv, expected: .colmiR02),
             // Underscore = QRing, and the marker no longer overrides that (it may well be on a QRing ring
             // too — every ring in this SDK family carries the Yucheng company ID).
-            ("QRing-Colmi carrying the Yucheng company ID", "R09_00AA", smartHealthAdv, .colmiR02),
-            ("QRing-Colmi (COLMI-prefixed name)", "COLMI R10_xyz", smartHealthAdv, .colmiR02),
-            ("R99, name only — the capture we actually have", "R99 54DC", noAdv, .colmiSmartHealth),
-            ("R99 with the Yucheng company ID", "R99 54DC", smartHealthAdv, .colmiSmartHealth),
-            ("R99 lowercase hex suffix", "R99 54dc", noAdv, .colmiSmartHealth),
-            ("TK5", "TK5 24AA", tk5Adv, .tk5),
-            ("TK5, name only", "TK5 24AA", noAdv, .tk5),
-            ("unknown peripheral", "Galaxy Watch", noAdv, nil),
+            ClaimCase(label: "QRing-Colmi carrying the Yucheng company ID", name: "R09_00AA", advertisement: smartHealthAdv, expected: .colmiR02),
+            ClaimCase(label: "QRing-Colmi (COLMI-prefixed name)", name: "COLMI R10_xyz", advertisement: smartHealthAdv, expected: .colmiR02),
+            ClaimCase(label: "R99, name only — the capture we actually have", name: "R99 54DC", advertisement: noAdv, expected: .colmiSmartHealth),
+            ClaimCase(label: "R99 with the Yucheng company ID", name: "R99 54DC", advertisement: smartHealthAdv, expected: .colmiSmartHealth),
+            ClaimCase(label: "R99 lowercase hex suffix", name: "R99 54dc", advertisement: noAdv, expected: .colmiSmartHealth),
+            ClaimCase(label: "TK5", name: "TK5 24AA", advertisement: tk5Adv, expected: .tk5),
+            ClaimCase(label: "TK5, name only", name: "TK5 24AA", advertisement: noAdv, expected: .tk5),
+            ClaimCase(label: "unknown peripheral", name: "Galaxy Watch", advertisement: noAdv, expected: nil),
         ]
-        for (label, name, advertisement, expected) in cases {
+        for ring in cases {
             XCTAssertEqual(
-                RingBLEClient.matchDeviceType(name: name, advertisement: advertisement),
-                expected,
-                label
+                RingBLEClient.matchDeviceType(name: ring.name, advertisement: ring.advertisement),
+                ring.expected,
+                ring.label
             )
         }
     }
