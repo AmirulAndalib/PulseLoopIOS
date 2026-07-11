@@ -127,6 +127,20 @@ enum RingDecodedEvent: Sendable {
     case bind(action: UInt8, state: UInt8)
     /// Capability bitmask reply (0x20). Consumed by `JringSyncEngine`; produces no `PulseEvent`.
     case bandFunction(JringBandCapabilities)
+    /// The device's own capability bitmap, already mapped onto `WearableCapability` (YCBT `02 01`; see
+    /// `YCBTSupportFunction`). Consumed by `RingBLEClient` to refine the active capability set — the
+    /// coordinator's baseline is what the *family* can do, this is what *this unit* claims. Produces no
+    /// `PulseEvent`: capabilities reach persistence via the re-published `.deviceIdentified`, not here.
+    case supportFunctions(Set<WearableCapability>)
+    /// The chipset/OTA family (YCBT `02 1b`). **Diagnostic only** — PulseLoop does no firmware updates,
+    /// so nothing branches on it; it is decoded because it is the one frame that says whether the ring's
+    /// OTA path is JieLi RCSP (3/4/5), which is what would gate the AE00 auth we deliberately don't
+    /// implement. Produces no `PulseEvent`.
+    case chipScheme(value: Int)
+    /// The ring reports it went on/off the finger (YCBT `06 13`). Debug-feed only for now — it produces
+    /// no `PulseEvent`, because nothing in the app gates on wear state yet. It is decoded so the packet
+    /// feed can show *why* a measurement returned nothing (the ring was off).
+    case wearingStatus(worn: Bool, timestamp: Date)
     case timeSyncAck(timestamp: Date)
     case commandAck(commandId: UInt8)
     case unknown(commandId: UInt8, raw: Data)
@@ -155,6 +169,9 @@ enum RingDecodedEvent: Sendable {
         case .firmware: return "firmware"
         case .bind: return "bind"
         case .bandFunction: return "band_function"
+        case .supportFunctions: return "support_functions"
+        case .chipScheme: return "chip_scheme"
+        case .wearingStatus: return "wearing_status"
         case .timeSyncAck: return "time_sync_ack"
         case .commandAck: return "command_ack"
         case .unknown: return "unknown"
@@ -166,7 +183,8 @@ enum RingDecodedEvent: Sendable {
         case .unknown:
             return .unknown
         case .commandAck, .heartRateComplete, .spo2Complete, .spo2Progress, .bind, .firmware,
-             .bandFunction:   // bit ordering unverified against hardware
+             .bandFunction,    // bit ordering unverified against hardware
+             .wearingStatus:   // layout is SDK-verified; the status byte's *polarity* is not
             return .partial
         default:
             return .known
@@ -201,6 +219,12 @@ enum RingDecodedEvent: Sendable {
             return #"{"bind_action":\#(action),"bind_state":\#(state)}"#
         case let .bandFunction(caps):
             return #"{"temp":\#(caps.hasTemperature),"spo2_separate":\#(caps.separateBloodOxygenMode),"spo2_offline":\#(caps.hasOxygenOfflineHistory),"pressure":\#(caps.hasPressureHistory)}"#
+        case let .supportFunctions(capabilities):
+            return #"{"claimed":"\#(capabilities.csv)"}"#
+        case let .chipScheme(value):
+            return #"{"chip_scheme":\#(value)}"#
+        case let .wearingStatus(worn, _):
+            return #"{"worn":\#(worn)}"#
         case let .historySyncProgress(stage):
             return #"{"stage":"\#(stage)"}"#
         case let .battery(percent):

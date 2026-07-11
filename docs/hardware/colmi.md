@@ -1,18 +1,27 @@
 ---
-title: Colmi / Yawell (QRing)
+title: Colmi / Yawell
 description: >-
-  The $15–30 QRing ring family (R02/R0x/R1x/H59) — Nordic-UART protocol, skin
-  temperature, REM sleep, and continuous background sync.
+  The $15–30 Colmi/Yawell ring family (R02/R0x/R1x/H59) — sold with either the
+  QRing app (Nordic-UART protocol) or the SmartHealth app (Yucheng YCBT).
 ---
 
-# Colmi / Yawell (QRing)
+# Colmi / Yawell
 
-**PulseLoop support: ✅ Supported** (R11 tested; rest implemented, needs testing 🧪)
+**PulseLoop support: ✅ Supported on QRing** (R11 tested; rest implemented, needs testing 🧪) ·
+**🧪 Limited on SmartHealth** ([see below](#smarthealth-app-colmi-rings))
 
 The QRing family — manufactured by Yawell and most commonly sold under the
 **Colmi** brand. These $15–30 rings speak a Nordic-UART–based protocol and bring
 sensors the cheaper [56ff / Jring](jring.md) lacks: skin temperature, REM sleep,
 HRV, stress, and continuous background sync.
+
+!!! warning "The same ring is sold with two different firmwares"
+    A Colmi ring ships with **either the QRing app or the SmartHealth app**, and the two speak
+    *completely different BLE protocols*. Everything on this page down to
+    [Hackability](#hackability) describes the **QRing** firmware. If your ring came with
+    **SmartHealth**, jump to [SmartHealth-app Colmi rings](#smarthealth-app-colmi-rings) — it is a
+    different driver, a different capability set, and PulseLoop asks you which one you have when you
+    pair.
 
 ## At a glance
 
@@ -41,7 +50,7 @@ HRV, stress, and continuous background sync.
 - **Colmi** (Shenzhen Colmi Technology Co., Ltd.) is the most popular licensed brand selling Yawell's QRing rings
 - Website: [yawellfit.com](https://www.yawellfit.com/), [colmi.com](https://www.colmi.com/)
 
-## Protocol
+## Protocol (QRing firmware)
 
 | Property | Value |
 |---|---|
@@ -49,6 +58,9 @@ HRV, stress, and continuous background sync.
 | **App** | QRing |
 | **Frame size** | 16 bytes (checksum) |
 | **Encryption** | None |
+
+A SmartHealth-flavoured unit speaks none of this — see
+[SmartHealth-app Colmi rings](#smarthealth-app-colmi-rings).
 
 ## Models — QRing platform
 
@@ -108,7 +120,7 @@ The VC30F is the PPG bio-sensor used in R10, R11, and R12:
 - Wear detection (wake on motion)
 - Raw acceleration data for sleep and activity algorithms
 
-## Capabilities per model
+## Capabilities per model (QRing firmware)
 
 | Capability | R10 | R12 | R11 | Other QRing¹ |
 |---|---|---|---|---|
@@ -140,6 +152,127 @@ The VC30F is the PPG bio-sensor used in R10, R11, and R12:
 - Stress scoring
 - Continuous background sync (autonomous notifications while worn)
 
+---
+
+## SmartHealth-app Colmi rings
+
+**PulseLoop support: 🧪 Limited — implemented, never connected to a physical ring**
+
+Some Colmi rings ship with **SmartHealth** (`com.zhuoting.healthyucheng`) instead of QRing. Same
+brand, same product numbers, often the same box art — but the firmware inside speaks the **Yucheng
+YCBT** protocol on a `be940…` service, which has *nothing* in common at the wire level with QRing's
+Nordic-UART frames. It is the identical protocol the [TK5](tk5.md) speaks, byte for byte, so PulseLoop
+drives these rings with the same shared stack and only a per-family capability set on top.
+
+Byte-level spec: **[YCBT protocol](../YCBT-Protocol.md)** — and [§0](../YCBT-Protocol.md#0-the-two-families-that-speak-it)
+in particular, which is the complete list of what differs between a TK5 and a SmartHealth-Colmi.
+
+### Which rings
+
+| Ring | Ships with SmartHealth? |
+|---|---|
+| **Colmi R09, R10** | ✅ Confirmed by the project owner (these are the units this support was written for) |
+| Any other Colmi/Yawell model (R02, R03, R06, R07, R08, R11, R12, H59, Yawell R05/R10/R11) | ❔ Possible. The app a ring ships with is a seller/OEM choice, not a hardware one — the *same* model number is sold both ways. If yours came with SmartHealth, PulseLoop will try to drive it as a YCBT ring; it should work, and a report either way is genuinely useful |
+
+### How to tell which app your ring uses
+
+There is no way to tell from the ring itself, and **PulseLoop cannot reliably detect it either** — the
+Bluetooth local name (`R09_ABCD`, `COLMI R10_1234`) is set by the OEM, not by the app, so a QRing ring
+and a SmartHealth ring can advertise the *identical* name. So: check the box, the manual, the QR code
+on the leaflet, or the listing that sold it to you. Whichever app it told you to install is the answer.
+
+If you genuinely don't know, just try one — a wrong pick is a 20-second dead end with a one-tap fix,
+not a broken ring ([below](#if-you-pick-the-wrong-app)).
+
+### The pairing app-type picker
+
+Because the answer can't be detected, PulseLoop **asks**. Under every Colmi card in *Add your ring*
+there is a segmented picker — *"Which app came with your ring?"* — with **QRing** and **SmartHealth**.
+
+- **QRing is the default**, because it is the mature, hardware-proven driver.
+- The scan may *hint*: a ring whose advertisement looks like a SmartHealth unit defaults the picker to
+  SmartHealth. The hint is only a default — it is [provisional](#whats-still-provisional) and it may
+  never fire.
+- **Your pick is authoritative.** It, not the scan, chooses the driver; and it changes what the card
+  shows you before you connect (capability chips and the *Limited support* badge both follow the
+  picker, because the two firmwares expose different metric sets).
+- jring and TK5 cards show no picker: those rings ship with exactly one app, so they stay fully
+  auto-detected.
+
+### If you pick the wrong app
+
+Nothing breaks, and nothing wrong gets saved. The driver for the app you picked goes looking for
+service UUIDs the ring doesn't have: the Bluetooth link opens, GATT discovery comes up empty, and the
+connection never completes.
+
+PulseLoop times a user-initiated connect out after **20 seconds** and says so in the app's own terms —
+*"This ring didn't answer as a SmartHealth ring. If it came with the QRing app, switch the app type
+and try again."* — with a one-tap **"Try as QRing"** button that flips the picker and re-dials the same
+ring. (And symmetrically in the other direction.) Only the pairing attempt times out; a background
+reconnect to a ring you have already paired keeps waiting, as it should.
+
+### Capabilities
+
+The baseline is **what every YCBT ring does regardless of its sensors** — it is a protocol floor, not a
+SKU description. Everything sensor-dependent is *gated on the ring's own capability bitmap*: the
+handshake asks the ring what it has (`02 01` → `YCBTSupportFunction`), and PulseLoop claims those
+extras only if the ring itself claims them. The bitmap can only **add** capabilities from a
+pre-approved list — a garbled or truncated reply can never take one away.
+
+| Capability | QRing-Colmi | **SmartHealth-Colmi** | TK5 |
+|---|:---:|:---:|:---:|
+| Heart rate — history / live / spot | ✅ | 🧪 baseline | 🧪 |
+| SpO₂ — history | ✅ | 🧪 baseline | 🧪 |
+| SpO₂ — **spot** | ❌ (all-day only) | 🧪 baseline | 🧪 |
+| Steps / distance / calories | ✅ | 🧪 baseline | 🧪 |
+| Sleep, incl. REM | ✅ | 🧪 baseline | 🧪 |
+| HRV — history | ✅ | 🧪 baseline | 🧪 |
+| HRV — **spot** | ❌ | 🧪 baseline | 🧪 |
+| Battery level | ✅ | 🧪 baseline | 🧪 |
+| Find device | ✅ | 🧪 baseline | 🧪 |
+| Measurement intervals | ✅ | 🧪 baseline | 🧪 |
+| Skin temperature | ✅ | ❔ **bitmap** | 🧪 |
+| Stress | ✅ | ❔ **bitmap** | 🧪 |
+| Blood pressure — history | ❌ | ❔ **bitmap** | 🧪 |
+| Blood pressure — spot | ❌ | ❔ **bitmap** | 🧪 |
+| Blood sugar | ❌ | ❔ **bitmap** | 🧪 |
+| Fatigue | ✅ | ❌ | 🧪 |
+| Power off / factory reset | ✅ | ❌ | ❌ |
+| Continuous background sync | ✅ | ❌ | ❌ |
+
+- **🧪 baseline** — claimed for every SmartHealth-Colmi, but no unit has confirmed any of it yet.
+- **❔ bitmap** — claimed *only* if this particular ring's SupportFunction bitmap sets the bit. Two
+  Colmi rings on the identical protocol genuinely differ on whether they carry a temperature or
+  blood-pressure sensor, so this is a per-unit answer, not a per-family one.
+- **Fatigue is deliberately not claimed**, unlike on the TK5. It rides the body-data record and *no
+  bit names it*, so it can be neither gated nor honestly promised on hardware nobody has connected —
+  and an unsupported claim here is user-visible, as a Vitals gauge stuck at "No fatigue score yet". The
+  first real sync decides; adding it back is a one-line change.
+- **Power off / factory reset** are QRing-protocol commands with no YCBT equivalent in PulseLoop, so
+  the SmartHealth firmware simply doesn't offer them.
+- **No background sync while disconnected** — like the TK5, the ring keeps logging on its own (that's
+  what the all-day monitors are for), but PulseLoop only reads it while connected: on connect, every
+  30 minutes thereafter, and after a workout.
+
+### 🧪 What's still provisional
+
+**No SmartHealth-Colmi has ever been connected to PulseLoop.** The protocol is not the risk — it is
+byte-identical to the TK5's and is exercised by the same unit tests — but everything *specific to this
+family* is a prediction until a real ring answers:
+
+| Provisional | What it is | If it's wrong |
+|---|---|---|
+| **The advertisement match** | `ColmiSmartHealthCoordinator.Advertisement` — a Colmi-line local name **and** the `1078` product code somewhere in the manufacturer data **and** *no* QRing service UUID (`6e40fff0` / `de5bf728`). Taken from the vendor SDK's own scan filter (`BleHelper.filterDevice` accepts any advertisement whose hex *contains* `1078`), never from a capture of one of these rings | **Nothing stops working.** This is only the *hint* that pre-selects the picker. The user's pick chooses the driver, so a hint that never fires costs one toggle flip, not a connection. Both constants live in one place, to be refined the moment a capture exists |
+| **The capability bitmap** | Which bits an R09/R10 actually sets — i.e. whether it really has temperature, BP, stress, blood sugar | A gated capability silently stays off (safe), or the ring claims one whose data never arrives (the card stays empty) |
+| **`AE00` / JieLi RCSP gating** | The TK5 answers health commands in plaintext with no auth handshake, and the SDK proves the two code paths are independent — but it cannot prove a given *firmware* doesn't refuse `05 xx` until RCSP auth completes. See [TK5 → the AE00 service](tk5.md#the-ae00-service) | The one scenario that would be a **hard stop** for this family: the RCSP key is native and not recoverable. It is the first thing the first real sync checks |
+| **GATT topology** | That a SmartHealth-Colmi exposes the same `be940000/01/03` service and characteristics as the TK5 | The driver finds nothing to subscribe and the connect times out — same failure, and the same recovery, as picking the wrong app |
+
+Support stays **Limited** until a physical R09/R10 pairs, syncs, and its bitmap is read. If you own
+one, [Contributing](../project/contributing.md) explains how to send a report — a `nRF Connect` scan of
+the advertisement alone is already useful.
+
+---
+
 ## Hackability
 
 ### 🏆 Full-Stack Hackable: Colmi R02 / R03 / R06
@@ -169,5 +302,6 @@ The manufacturer publishes firmware update images with no authenticity checks �
 ---
 
 See the [hardware overview](index.md) for the full cross-manufacturer comparison
-tables, or the [Jring / 56ff](jring.md) page for the cheaper option (the only one
-with BP/blood sugar).
+tables, the [Jring / 56ff](jring.md) page for the cheaper option, or — if your Colmi came with the
+SmartHealth app — the [TK5](tk5.md) page and the [YCBT protocol](../YCBT-Protocol.md) reference, whose
+driver it shares.

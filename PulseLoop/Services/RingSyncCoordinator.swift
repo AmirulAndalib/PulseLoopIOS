@@ -127,6 +127,12 @@ final class RingSyncCoordinator {
 
     private var streamTask: Task<Void, Never>?
     private var clockChangeTask: Task<Void, Never>?
+    private var periodicSyncTask: Task<Void, Never>?
+
+    /// SmartHealth re-reads its ring's stored history every 30 minutes while connected; PulseLoop matches
+    /// that cadence. The ring has no cursor — it always dumps everything it holds for a type — so a
+    /// tighter interval would just re-transfer the same records for nothing.
+    private let periodicSyncInterval: TimeInterval = 30 * 60
 
     init(client: RingBLEClient, context: ModelContext) {
         self.client = client
@@ -143,33 +149,6 @@ final class RingSyncCoordinator {
             }
         }
         observeClockChanges()
-    }
-
-    /// The jring's RTC runs on local wall-clock time — its sleep detection and day-indexed history
-    /// queries key off it. When the phone crosses a timezone or a DST boundary, push the new clock so
-    /// the ring doesn't keep bucketing days at the old offset. Rings whose firmware ignores its own
-    /// RTC get a default no-op `resyncTime()`.
-    private func observeClockChanges() {
-        guard clockChangeTask == nil else { return }
-        let names: [Notification.Name] = [
-            .NSSystemTimeZoneDidChange,                      // user switched timezone
-            UIApplication.significantTimeChangeNotification, // DST rollover / midnight / clock set
-        ]
-        clockChangeTask = Task { [weak self] in
-            await withTaskGroup(of: Void.self) { group in
-                for name in names {
-                    group.addTask {
-                        for await _ in NotificationCenter.default.notifications(named: name) {
-                            guard let self else { return }
-                            await MainActor.run {
-                                guard self.client.state == .connected else { return }
-                                self.engine?.resyncTime()
-                            }
-                        }
-                    }
-                }
-            }
-        }
     }
 
     // MARK: - Actions
@@ -522,9 +501,13 @@ final class RingSyncCoordinator {
             // Ring came back mid-workout: the new connection's engine doesn't know a stream was
             // running, so re-issue the live HR command.
             restartWorkoutHeartRateIfActive()
+            startPeriodicSync()
         case let .deviceStateChanged(state, _):
             // Any non-connected transition (disconnect / failure) ends an in-flight sync.
-            if state != .connected { endSync() }
+            if state != .connected {
+                endSync()
+                stopPeriodicSync()
+            }
         case let .syncProgress(stage):
             updateSync(stage: stage)
         default:
@@ -536,7 +519,13 @@ final class RingSyncCoordinator {
 
     /// Apply a `.syncProgress` stage. The `"done"` sentinel (emitted on history-sync finish) ends
     /// the sync; any other stage keeps the bar up and re-arms the stall timeout.
+    ///
+    /// A stage — any stage — is the one signal that the ring is *actually* handing data over, which is
+    /// what "Synced Xm ago" claims. Stamping it here (rather than at the periodic tick, where
+    /// `syncHistory()` is a no-op on jring/Colmi) keeps the label honest for the families whose history
+    /// only comes down with the connect handshake.
     private func updateSync(stage: String) {
+        lastSyncAt = Date()
         guard stage != "done" else { endSync(); return }
         syncStage = stage
         armSyncTimeout()
@@ -607,6 +596,77 @@ final class RingSyncCoordinator {
             guard let self, !Task.isCancelled else { return }
             self.endSync()
         }
+    }
+}
+
+// MARK: - Long-lived background tasks
+
+/// The coordinator's two open-ended tasks, kept out of the (already large) class body: both are armed
+/// once per connection, both are `[weak self]` so a deallocated coordinator ends them, and neither owns
+/// state beyond the `Task` handle it parks back on the coordinator.
+private extension RingSyncCoordinator {
+    /// The jring's RTC runs on local wall-clock time — its sleep detection and day-indexed history
+    /// queries key off it. When the phone crosses a timezone or a DST boundary, push the new clock so
+    /// the ring doesn't keep bucketing days at the old offset. Rings whose firmware ignores its own
+    /// RTC get a default no-op `resyncTime()`.
+    func observeClockChanges() {
+        guard clockChangeTask == nil else { return }
+        let names: [Notification.Name] = [
+            .NSSystemTimeZoneDidChange,                      // user switched timezone
+            UIApplication.significantTimeChangeNotification, // DST rollover / midnight / clock set
+        ]
+        clockChangeTask = Task { [weak self] in
+            await withTaskGroup(of: Void.self) { group in
+                for name in names {
+                    group.addTask {
+                        for await _ in NotificationCenter.default.notifications(named: name) {
+                            guard let self else { return }
+                            await MainActor.run {
+                                guard self.client.state == .connected else { return }
+                                self.engine?.resyncTime()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Top up the app's copy of the ring's log every 30 minutes **while connected**.
+    ///
+    /// This is emphatically *not* background sync: iOS gives us no BLE time while the ring is
+    /// disconnected, so a ring worn away from the phone still only hands over its log on the next
+    /// connect, and the docs must keep saying so. This only closes the "app has been open for hours and
+    /// the data is still from the connect handshake" gap.
+    ///
+    /// Suppressed while a transfer is already running (`isSyncing`) or a workout is streaming live HR — a
+    /// history dump would compete with the stream for the link, and `syncWorkoutVitals()` already covers
+    /// that window at finish. `YCBTHistoryTransfer.start` refuses a re-entrant transfer anyway, so this is
+    /// the polite half of a belt-and-braces pair. Rings whose history only comes down with the handshake
+    /// (jring/Colmi) get a no-op `syncHistory()`, so the timer costs them nothing.
+    ///
+    /// Armed from `.deviceStateChanged(.connected,)`, which is re-published on every `02 00` reply and not
+    /// just on the first connect — hence the idempotence guard.
+    func startPeriodicSync() {
+        guard periodicSyncTask == nil else { return }
+        let interval = UInt64(periodicSyncInterval * 1_000_000_000)
+        periodicSyncTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: interval)
+                guard !Task.isCancelled, let self else { return }
+                guard self.isConnected, !self.isSyncing, !self.workoutHRActive else { continue }
+                // The engine's own `.syncProgress` stages drive the progress bar (and its `"done"` stage
+                // clears it), so a ring with no new records shows nothing. They also stamp `lastSyncAt`
+                // — the tick itself must not, or a family whose `syncHistory()` is a no-op (jring/Colmi)
+                // would show "Synced just now" every 30 minutes without a byte on the wire.
+                self.engine?.syncHistory()
+            }
+        }
+    }
+
+    func stopPeriodicSync() {
+        periodicSyncTask?.cancel()
+        periodicSyncTask = nil
     }
 }
 

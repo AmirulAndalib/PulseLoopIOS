@@ -139,13 +139,20 @@ declares exactly what it can do and the app shows only those features.
 | Ring | BLE Family | Advertised name | Price |
 | --- | --- | --- | --- |
 | jring (generic smart ring) | `56ff` | `SMART_RING` | $7–12 |
-| Colmi / Yawell ring family | `6e40fff0` / `de5bf728` | `R02_…`, `R0x…`, `COLMI R1x…`, `H59_…` | $15–30 |
-| TK5 ring — 🧪 **limited support** | `be940` (SmartHealth) | `TK5 …` (e.g. `TK5 24AA`) | ❓ |
+| Colmi / Yawell ring family — **QRing app** | `6e40fff0` / `de5bf728` | `R02_…`, `R0x…`, `COLMI R1x…`, `H59_…` | $15–30 |
+| Colmi / Yawell ring family — **SmartHealth app** — 🧪 **limited support** | `be940` (Yucheng YCBT) | same names as above | $15–30 |
+| TK5 ring — 🧪 **limited support** | `be940` (Yucheng YCBT) | `TK5 …` (e.g. `TK5 24AA`) | ❓ |
 
-> 🧪 **TK5 support is experimental.** Its driver was reverse-engineered from a single packet
-> capture: some readings are unverified and may be missing or wrong, skin temperature and stress
-> aren't decoded, and the ring's encrypted login isn't implemented. The app labels it "Limited
-> support" when you pair it. See the [TK5 page](https://saksham2001.github.io/PulseLoopiOS/hardware/tk5/).
+> 🧪 **The two YCBT rings (TK5, SmartHealth-app Colmi) are experimental.** Their driver is rebuilt from
+> the decompiled SmartHealth vendor SDK, but a handful of value scales still need one confirmed reading
+> on real hardware, and the SmartHealth-Colmi variant has never been connected at all. The app labels
+> both "Limited support" when you pair them.
+>
+> ⚠️ **A Colmi ring ships with *either* the QRing or the SmartHealth app**, and its Bluetooth name
+> doesn't say which — so PulseLoop asks you when you pair. Pick the wrong one and it just won't
+> connect; the app then offers a one-tap "try the other app" retry. See the
+> [Colmi page](https://saksham2001.github.io/PulseLoopiOS/hardware/colmi/#smarthealth-app-colmi-rings)
+> and the [TK5 page](https://saksham2001.github.io/PulseLoopiOS/hardware/tk5/).
 
 > 📚 **Full hardware specs, per-model capability matrix, and buying guidance:
 > [Supported hardware docs](https://saksham2001.github.io/PulseLoopiOS/hardware/).**
