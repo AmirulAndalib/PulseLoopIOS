@@ -15,6 +15,76 @@ protocol RingSyncGating: AnyObject {
     func awaitSyncCompletion(timeout: TimeInterval) async -> Bool
 }
 
+/// Which spot measurements are in flight, and which of them the ring has **refused**.
+///
+/// A ring can decline a measurement rather than merely fail to produce one: the owner's Colmi R99
+/// answers the HRV start (`03 2f` mode `0x0a`) with status `0x01`, because it has no HRV sensor. That
+/// refusal used to decode to a generic ack, so the app polled a ring that had already said no for the
+/// full 45-second window before reporting a generic failure. `RingSyncCoordinator` now aborts on it.
+///
+/// The rule this type exists to hold — **a refusal may only ever abort the measurement it names** — is
+/// the part that must not be got wrong, so it lives in a value type that can be tested without a live
+/// BLE link rather than in loose flags on the coordinator:
+///
+/// - A measurement not in flight has no window left to cut short, so a rejection that arrives late (after
+///   the window closed, or from a stop) finds nothing to cancel.
+/// - A rejection naming a different mode is dropped: it cannot fail an unrelated measurement.
+/// - A **workout HR stream never begins one** — it is not a spot measurement, has no window to cut
+///   short, and must keep streaming through anything that happens to a spot reading.
+///
+/// **Several measurements can be in flight at once**, and that is not hypothetical: while a workout is
+/// recording, `WorkoutSensorPollingService` fires `measureHR()`/`measureSpO2()` on its own timer, and
+/// nothing serializes that against the Measurement modal, the BP calibration screen, or the coach's action
+/// tools — each `measure*` only guards its *own* re-entry. So ownership is explicit: `begin` hands back a
+/// `Token`, and only that token can read its own verdict or retire it. One shared slot failed all three
+/// ways — the second `begin` overwrote the first's mode (so the first's refusal no longer matched it and
+/// it spun its whole window), the first `end` disarmed the second, and, worst, the abort closures read one
+/// shared `isRejected` without asking *whose* refusal it was, so a refused BP start also aborted a workout
+/// HR poll the ring had never said a word about.
+///
+/// The mode byte is YCBT's (`YCBTMeasurementMode`). It is the only protocol here that answers a start
+/// with a verdict, so on jring and QRing-Colmi this is inert bookkeeping nothing ever reads.
+struct SpotMeasurementGate {
+    /// A handle to one in-flight spot measurement. Identity is `id`, **not** the mode, so two flows that
+    /// somehow ran the same mode at once still could not end or abort each other.
+    struct Token: Hashable {
+        fileprivate let id = UUID()
+        let mode: UInt8
+    }
+
+    /// The measurements currently mid-poll, and whether the ring has refused each.
+    private var inFlight: [Token: Bool] = [:]
+
+    /// Arm the gate for one measurement and hand back its handle.
+    mutating func begin(mode: UInt8) -> Token {
+        let token = Token(mode: mode)
+        inFlight[token] = false
+        return token
+    }
+
+    /// Disarm `token` — and only `token`. Called on every exit path (success, timeout, rejection); the
+    /// measurement that finishes first must not disarm one still running.
+    mutating func end(_ token: Token) {
+        inFlight.removeValue(forKey: token)
+    }
+
+    /// Has the ring refused **this** measurement? What each `pollForValue` abort closure asks, so a
+    /// refusal can only ever end the measurement it actually named.
+    func isRejected(_ token: Token) -> Bool {
+        inFlight[token] ?? false
+    }
+
+    /// The ring refused `mode`. Honoured only by the in-flight measurement(s) actually running it.
+    mutating func noteRejected(mode: UInt8) {
+        for token in inFlight.keys where token.mode == mode {
+            inFlight[token] = true
+        }
+    }
+
+    /// The modes currently mid-poll. Read by tests; the coordinator drives everything through tokens.
+    var modesInFlight: Set<UInt8> { Set(inFlight.keys.map(\.mode)) }
+}
+
 /// High-level orchestration of ring command flows. Subscribes to `PulseEventBus` to track the
 /// latest measurement values and completion signals, and exposes app-facing actions
 /// (`syncNow`, `measureHR`, `measureSpO2`, `querySleep`, `setGoal`). It only *orchestrates*
@@ -98,20 +168,42 @@ final class RingSyncCoordinator {
     /// reading from a stale `latestHRValue` left on screen from a previous measurement.
     private var measurementReceivedReading = false
 
+    /// The spot measurements in flight, and which of them the ring has refused — see
+    /// `SpotMeasurementGate`, which owns the rule that a refusal can only ever abort the measurement it
+    /// actually names, and holds several concurrent measurements apart by token.
+    private var spot = SpotMeasurementGate()
+
     /// Ring connection state, surfaced for the workout polling layer + UI.
     var connectionState: RingConnectionState { client.state }
     var isConnected: Bool { client.state == .connected }
 
-    /// Max time to wait for an on-demand reading before giving up. A Colmi manual HR reading can need
-    /// 15–30s of on-finger warm-up, so we poll up to this window and succeed the moment a value lands.
+    // MARK: Spot-measurement windows
+    //
+    // How long to keep polling for an on-demand reading before calling it a failure. These are not
+    // arbitrary: the numbers below are set against what the owner's Colmi R99 actually took, measured
+    // from the `03 2f` start frame to the reply that carried the value —
+    //
+    //   HR   ~19 s (window 30) · SpO₂ **38 s** (window was 40) · BP ~12 s (window 45)
+    //
+    // — plus enough headroom that a slow session is not a failed one. A window is a ceiling, never a
+    // wait: every measurement returns the instant its value lands (and now, on a ring that refuses the
+    // measurement outright, the instant it says so — see `SpotMeasurementGate`).
+
+    /// A Colmi manual HR reading can need 15–30s of on-finger warm-up (observed: ~19 s).
     private let hrMeasureSeconds: UInt64 = 30
     /// After the first valid bpm, keep reading this long so the reported value is settled, not a jumpy
     /// first sample.
     private let hrSettleSeconds: Int = 4
-    private let spo2MeasureSeconds: UInt64 = 40
-    /// HRV needs a stretch of beats to stabilize, so give it a longer on-finger window.
+    /// **Raised from 40 s.** The R99's successful SpO₂ sweep took 38 s — inside a 40 s window by two
+    /// seconds — and an earlier attempt in the same session ran past 41 s with no result. At 40 s the
+    /// outcome was a coin toss: the user watched the ring's red LED work and got an error anyway. 60 s
+    /// puts a comfortable margin around the one real timing we have; the cost of the extra 20 s is paid
+    /// only by a measurement that was going to fail regardless.
+    private let spo2MeasureSeconds: UInt64 = 60
+    /// HRV needs a stretch of beats to stabilize, so give it a longer on-finger window. (A ring without
+    /// an HRV sensor no longer waits it out — it now refuses the `03 2f` start and we fail immediately.)
     private let hrvMeasureSeconds: UInt64 = 45
-    /// BP rides the same PPG warm-up as SpO2 and the ring's estimator settles slowly.
+    /// BP rides the same PPG warm-up as SpO2 and the ring's estimator settles slowly (observed: ~12 s).
     private let bpMeasureSeconds: UInt64 = 45
     /// The combined sweep computes every metric, so give it the longest window (observed: the ring
     /// streams empty packets for ~20s before the populated burst).
@@ -322,6 +414,7 @@ final class RingSyncCoordinator {
         measurementReceivedReading = false
         // Spot reading: the engine picks the right command (jring live stream / Colmi manual 0x69
         // continuous stream). Always stop the stream when we're done so the ring doesn't keep measuring.
+        let token = spot.begin(mode: YCBTMeasurementMode.heartRate)
         engine?.measureHeartRateSpot()
         // Phase 1 — warm up: the manual stream emits bpm 0 for ~25s before a real reading. Poll the full
         // window for the first reading *of this measurement* (not a stale prior value). Warm-up zeros are
@@ -329,7 +422,7 @@ final class RingSyncCoordinator {
         _ = await pollForValue(
             window: hrMeasureSeconds,
             value: { self.measurementReceivedReading ? self.latestHRValue : nil },
-            abort: { self.hrNoReadingReported }
+            abort: { self.hrNoReadingReported || self.spot.isRejected(token) }
         )
         // Phase 2 — settle: keep reading briefly so the reported value is stable, not a first jump.
         var result = measurementReceivedReading ? latestHRValue : nil
@@ -339,6 +432,7 @@ final class RingSyncCoordinator {
                 if let v = latestHRValue { result = v }   // latest stable sample
             }
         }
+        spot.end(token)
         engine?.stopHeartRate()
         // A spot read's stop also tears down the realtime stream (Colmi stops both 0x69 and 0x1e);
         // if a workout stream is supposed to be running, bring it straight back.
@@ -365,12 +459,14 @@ final class RingSyncCoordinator {
         guard client.state == .connected else { spo2State = .failed; return nil }
         spo2State = .measuring
         latestSpO2Value = nil
+        let token = spot.begin(mode: YCBTMeasurementMode.spo2)
         engine?.startSpO2()
         let result = await pollForValue(
             window: spo2MeasureSeconds,
             value: { self.latestSpO2Value },
-            abort: { false }
+            abort: { self.spot.isRejected(token) }
         )
+        spot.end(token)
         engine?.stopSpO2()
         // On rings whose live metrics share one stream (TK5: every metric rides `03 2f`, and its stop
         // is mode-agnostic), stopping SpO2 also tears down a running workout HR stream. Bring it back.
@@ -381,19 +477,23 @@ final class RingSyncCoordinator {
 
     /// Spot HRV reading. The engine starts the device's dedicated HRV mode (TK5: `03 2f 010a`), we
     /// wait for the first live HRV sample, then stop. Capability-gated to `.manualHrv`, so only rings
-    /// whose live protocol has an HRV mode reach this.
+    /// whose live protocol has an HRV mode reach this — which, since the R99, means a ring whose own
+    /// bitmap claimed one. A ring that lies about it (or a firmware that changes its mind) is caught by
+    /// the abort below: the `03 2f` refusal ends the measurement in the time one reply takes to arrive.
     @discardableResult
     func measureHRV() async -> Int? {
         guard hrvState != .measuring else { return nil }
         guard client.state == .connected else { hrvState = .failed; return nil }
         hrvState = .measuring
         latestHRVValue = nil
+        let token = spot.begin(mode: YCBTMeasurementMode.hrv)
         engine?.startHRV()
         let result = await pollForValue(
             window: hrvMeasureSeconds,
             value: { self.latestHRVValue },
-            abort: { false }
+            abort: { self.spot.isRejected(token) }
         )
+        spot.end(token)
         engine?.stopHRV()
         // Same shared-stream teardown as SpO2 above: restore the workout's live HR if one was running.
         restartWorkoutHeartRateIfActive()
@@ -410,12 +510,14 @@ final class RingSyncCoordinator {
         guard client.state == .connected else { bpState = .failed; return nil }
         bpState = .measuring
         latestBloodPressureValue = nil
+        let token = spot.begin(mode: YCBTMeasurementMode.bloodPressure)
         engine?.startBloodPressure()
         _ = await pollForValue(
             window: bpMeasureSeconds,
             value: { self.latestBloodPressureValue?.systolic },
-            abort: { false }
+            abort: { self.spot.isRejected(token) }
         )
+        spot.end(token)
         let result = latestBloodPressureValue
         engine?.stopBloodPressure()
         // Same shared-stream teardown as SpO2/HRV above: restore the workout's live HR if one ran.
@@ -510,6 +612,12 @@ final class RingSyncCoordinator {
             }
         case let .syncProgress(stage):
             updateSync(stage: stage)
+        case let .rawPacket(direction, _, decoded):
+            // `.measurementRejected` has no `PulseEvent` of its own — it is a verdict on a command, not
+            // data — so the raw-packet feed (which carries every decoded frame) is where a measurement
+            // hears the ring say no.
+            guard direction == .incoming, case let .measurementRejected(mode) = decoded else { break }
+            spot.noteRejected(mode: mode)
         default:
             break
         }

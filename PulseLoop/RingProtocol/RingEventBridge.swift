@@ -123,6 +123,10 @@ enum RingEventBridge {
             // Everything else: events with no typed fan-out here (timeSyncAck/commandAck/unknown, and
             // bind — advanced by the sync engine's `handle`), plus the jring/56ff 0x24 extras + firmware
             // which are split into `extraMetricEvents` to keep this switch's complexity in check.
+            //
+            // `.measurementRejected` belongs to that first group on purpose: it is the ring declining a
+            // command, not a reading, so there is nothing to persist. `RingSyncCoordinator` reads it off
+            // the raw-packet feed instead — the one consumer that has any business acting on it.
             return extraMetricEvents(for: decoded)
         }
     }

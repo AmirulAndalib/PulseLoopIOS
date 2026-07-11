@@ -429,6 +429,26 @@ mode 0 tells the ring to stop *heart rate* — which is exactly the bug this rep
 03 2f 08 00 01 02  0d 3b     start SpO₂   (stop = …00 02)
 ```
 
+**The ring answers a start with a verdict — one status byte, and no mode.** `0x00` = started; anything
+else is the firmware declining. The SDK never names the code (`packetAppControlHandle` falls through to
+`onDataResponse(bArr[last], …)`), and because the reply doesn't echo the mode, the only way to know
+*which* measurement was refused is to remember the start you sent — which is what `YCBTDriver` does,
+handing the mode to the decoder so it can emit `.measurementRejected(mode:)`.
+
+The owner's R99 (firmware 2.32) is why this matters: it has no HRV sensor and says so four ways — a
+clear `ISHASHRV` bit, `0xFC` on the HRV monitor (`01 45`), `0xFC` on the body-data history (`05 33`),
+and here:
+
+```
+app  → 03 2f 08 00 01 0a          start HRV
+ring → 03 2f 07 00 01             status 0x01 — refused
+```
+
+Treating that as an ordinary ack is what made PulseLoop poll a ring that had already said no for the
+full 45-second measurement window before giving a generic failure. Observed timings for the sweeps it
+*does* run, start frame → value, all on the same ring: **HR ~19 s · SpO₂ 38 s · BP ~12 s** (which is why
+the SpO₂ window is 60 s and not 40 s — 38 s was landing inside a 40 s window by two seconds).
+
 ### 5.2 Other AppControl commands PulseLoop sends
 
 ```

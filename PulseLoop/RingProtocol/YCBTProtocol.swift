@@ -239,6 +239,18 @@ enum YCBTMeasurementMode {
     static let bloodFat: UInt8 = 0x09
     static let hrv: UInt8 = 0x0a
     static let stress: UInt8 = 0x0c
+
+    /// The ring's **verdict** on a `03 2f` start, and the reason `.measurementRejected` exists.
+    ///
+    /// The reply is a single status byte — `0x00` = accepted, non-zero = "I will not run that" — and it
+    /// **does not echo the mode**, so the SDK just hands its caller `bArr[last]` as an opaque `code`
+    /// (`YCBTClientImpl.packetAppControlHandle`, which falls through to `onDataResponse(code, …)`).
+    /// Whoever decodes it therefore has to remember which mode it asked for; `YCBTDriver` does.
+    ///
+    /// Hardware: the owner's R99 answered `0x00` for HR / SpO₂ / BP and **`0x01` for HRV (mode 0x0a)** —
+    /// a ring saying, in one byte, that a sensor its bitmap already disclaimed is not there. Treating
+    /// that as an ordinary ack is what made the app poll for 45 s before giving a generic failure.
+    static func isAccepted(status: UInt8) -> Bool { status == 0x00 }
 }
 
 /// Group 4 (**DevControl**) — the ring→app push channel: measurement progress/results, SOS, find-phone,

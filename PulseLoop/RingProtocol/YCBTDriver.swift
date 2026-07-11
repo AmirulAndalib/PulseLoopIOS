@@ -22,6 +22,36 @@ final class YCBTDriver: WearableDriver {
     /// engine sees decoded events), and it is handed to the engine so `runStartup` can seed the queue.
     private let transfer: YCBTHistoryTransfer
 
+    /// The `03 2f` commands still owed a reply, oldest first — the mode for a **start**, `nil` for a
+    /// **stop** (a rejected stop cancels nothing, so it names no measurement).
+    ///
+    /// The ring answers a live-measurement command with a bare status byte and **no mode**, so a refusal
+    /// is anonymous on the wire. The driver is the one place that sees both directions — `frame(_:)` for
+    /// every outbound command, `ingest(_:from:)` for every inbound frame — so it is the only place that
+    /// can pair the two up.
+    ///
+    /// It has to be a **queue**, not one slot, because more than one `03 2f` is routinely outstanding:
+    ///
+    ///   • Framing happens when a command is *enqueued* (`RingBLEClient.enqueueWrite` calls `frame(_:)`
+    ///     on the way into the serialized write queue), not when it reaches the wire — so a command is
+    ///     recorded here long before the ring has answered the one ahead of it.
+    ///   • Every spot measurement ends with `engine.stopX()` immediately followed by
+    ///     `restartWorkoutHeartRateIfActive()` (`RingSyncCoordinator`), which during a workout enqueues a
+    ///     stop and a start back-to-back. Both are still owed replies.
+    ///
+    /// With a single slot the start overwrote the stop, the stop's `0x00` reply was then read as *the
+    /// start's* verdict and cleared the slot, and the start's real refusal decoded anonymously and was
+    /// swallowed — the ring said no and the user still watched the full window run out, which is the exact
+    /// failure this path exists to kill. (A *NAKed* stop was worse: it decoded as a refusal of the start
+    /// behind it and aborted a measurement the ring was actually running.) One serialized write queue and
+    /// one ring means replies come back in the order the commands went out, so FIFO pairing is exact.
+    private var pendingMeasurementReplies: [UInt8?] = []
+
+    /// A ring that stops answering `03 2f` must not grow the queue without bound. Real pipeline depth is
+    /// two (the stop+restart pair above), so reaching this means replies are no longer coming; the oldest
+    /// entries are then the stale ones, and dropping them keeps the newest command pairable.
+    private static let maxPendingMeasurementReplies = 8
+
     init(writer: RingCommandWriter) {
         self.writer = writer
         self.transfer = YCBTHistoryTransfer(writer: writer)
@@ -45,8 +75,28 @@ final class YCBTDriver: WearableDriver {
 
     // MARK: Framing
     func frame(_ command: Data) -> Data {
+        // Every outbound command passes through here exactly once, which is what makes this the seam that
+        // can watch for live-measurement commands (see `pendingMeasurementReplies`).
+        let logical = [UInt8](command)
+        noteLiveMeasurementCommand(logical)
         // Logical command is `[type, cmd, payload…]`; insert the total-length field and append CRC16.
-        YCBTFrame.frame([UInt8](command))
+        return YCBTFrame.frame(logical)
+    }
+
+    /// Queue one entry per outbound `03 2f {enable, mode}`: the mode for a start, `nil` for a stop. Any
+    /// other command is none of our business.
+    ///
+    /// A stop is queued too, and that is the point. The ring replies to a stop as well, and its reply is
+    /// byte-for-byte indistinguishable from a start's — so a stop we didn't queue would have its reply
+    /// consumed by the next start in line, and that start's own verdict lost.
+    private func noteLiveMeasurementCommand(_ logical: [UInt8]) {
+        guard logical.count >= 4,
+              logical[0] == YCBTGroup.appControl,
+              logical[1] == YCBTCommand.liveMeasurement else { return }
+        pendingMeasurementReplies.append(logical[2] == 1 ? logical[3] : nil)
+        if pendingMeasurementReplies.count > Self.maxPendingMeasurementReplies {
+            pendingMeasurementReplies.removeFirst()
+        }
     }
 
     // MARK: Lifecycle
@@ -57,6 +107,9 @@ final class YCBTDriver: WearableDriver {
     func connectionDidStart() {
         assembler.reset()
         transfer.cancel()
+        // Commands the old link never got a reply for are owed nothing by the new one; leaving them
+        // queued would pair the fresh connection's first `03 2f` reply with a dead command's mode.
+        pendingMeasurementReplies.removeAll()
     }
 
     /// Cancelling on the next *connect* is too late for the transfer: its stall watchdog is a timer, and
@@ -67,6 +120,7 @@ final class YCBTDriver: WearableDriver {
     func connectionDidEnd() {
         assembler.reset()
         transfer.cancel()
+        pendingMeasurementReplies.removeAll()
     }
 
     // MARK: Inbound decode
@@ -87,6 +141,12 @@ final class YCBTDriver: WearableDriver {
             case YCBTGroup.devControl:
                 acknowledgePush(frame)
                 events.append(contentsOf: decoder.decode(frame))
+            case YCBTGroup.appControl where frame.cmd == YCBTCommand.liveMeasurement:
+                // The verdict on the *oldest* `03 2f` still owed one. Retire it as we hand the decoder the
+                // mode that command carried (nil for a stop): this reply is the only one that command
+                // gets, so a duplicate or late frame finds the queue empty and refers to nothing.
+                let startedMode = pendingMeasurementReplies.isEmpty ? nil : pendingMeasurementReplies.removeFirst()
+                events.append(contentsOf: decoder.decode(frame, startedMode: startedMode))
             default:
                 events.append(contentsOf: decoder.decode(frame))
             }

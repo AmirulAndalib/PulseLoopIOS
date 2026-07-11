@@ -141,6 +141,15 @@ enum RingDecodedEvent: Sendable {
     /// no `PulseEvent`, because nothing in the app gates on wear state yet. It is decoded so the packet
     /// feed can show *why* a measurement returned nothing (the ring was off).
     case wearingStatus(worn: Bool, timestamp: Date)
+    /// The ring **refused** to start the spot measurement we asked for (YCBT `03 2f` answered with a
+    /// non-zero status). `mode` is the measurement mode we started — the reply itself carries only a
+    /// status byte, so the mode comes from the start `YCBTDriver` remembers sending.
+    ///
+    /// Produces no `PulseEvent`: it is a verdict on a command, not data. `RingSyncCoordinator` reads it
+    /// off the raw-packet feed and aborts the matching in-flight measurement, which is the whole point —
+    /// the owner's R99 refuses HRV (mode `0x0a` → status `0x01`), and without this the app polls a ring
+    /// that already said no for the full 45-second window before reporting a generic failure.
+    case measurementRejected(mode: UInt8)
     case timeSyncAck(timestamp: Date)
     case commandAck(commandId: UInt8)
     case unknown(commandId: UInt8, raw: Data)
@@ -172,6 +181,7 @@ enum RingDecodedEvent: Sendable {
         case .supportFunctions: return "support_functions"
         case .chipScheme: return "chip_scheme"
         case .wearingStatus: return "wearing_status"
+        case .measurementRejected: return "measurement_rejected"
         case .timeSyncAck: return "time_sync_ack"
         case .commandAck: return "command_ack"
         case .unknown: return "unknown"
@@ -183,8 +193,11 @@ enum RingDecodedEvent: Sendable {
         case .unknown:
             return .unknown
         case .commandAck, .heartRateComplete, .spo2Complete, .spo2Progress, .bind, .firmware,
-             .bandFunction,    // bit ordering unverified against hardware
-             .wearingStatus:   // layout is SDK-verified; the status byte's *polarity* is not
+             .bandFunction,          // bit ordering unverified against hardware
+             .wearingStatus,         // layout is SDK-verified; the status byte's *polarity* is not
+             .measurementRejected:   // 0x00 = accepted is hardware-confirmed; that *every* non-zero code
+                                     // means "refused" is the SDK's generic `code` contract, unnamed by
+                                     // any enum in it (we have seen exactly one: 0x01, refusing HRV)
             return .partial
         default:
             return .known
@@ -225,6 +238,8 @@ enum RingDecodedEvent: Sendable {
             return #"{"chip_scheme":\#(value)}"#
         case let .wearingStatus(worn, _):
             return #"{"worn":\#(worn)}"#
+        case let .measurementRejected(mode):
+            return #"{"rejected_mode":\#(mode)}"#
         case let .historySyncProgress(stage):
             return #"{"stage":"\#(stage)"}"#
         case let .battery(percent):

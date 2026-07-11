@@ -425,6 +425,67 @@ final class PairingMatchingTests: XCTestCase {
         XCTAssertTrue(ColmiSmartHealthCoordinator().bitmapGatedCapabilities.isSubset(of: derivable))
     }
 
+    /// The `02 01` bitmap the owner's `R99 54DC` (firmware 2.32) actually sent — 60 bytes, of which the
+    /// first 24 are its reply **verbatim** and the tail is zero padding. No mapped bit lives past byte 23
+    /// and every length gate the parser applies (14 / 18 / 23 / 24) is cleared either way, so the padding
+    /// cannot change what this resolves to. It is the best fixture we will ever have: a real ring's answer.
+    private var r99SupportBitmap: [UInt8] {
+        let claimed: [UInt8] = [
+            0xf9, 0x09, 0x00, 0x00, 0x00, 0x00, 0x0c, 0xd8,
+            0x10, 0x04, 0x01, 0xb2, 0xb6, 0x00, 0x40, 0x0f,
+            0x00, 0x14, 0x50, 0x00, 0x00, 0x00, 0x20, 0x00,
+        ]
+        return claimed + [UInt8](repeating: 0, count: 60 - claimed.count)
+    }
+
+    /// **The bug this family's gating exists to prevent, caught on real hardware.** The R99 does not have
+    /// an HRV sensor: its bitmap leaves `ISHASHRV` clear, it NAKs the HRV monitor (`01 45`) and the
+    /// body-data history (`05 33`) with `0xFC`, and it refuses the HRV measurement start outright
+    /// (`03 2f` mode `0x0a` → status `0x01`). While `.hrv`/`.manualHrv` were *baseline*, none of that
+    /// mattered — a baseline entry is an unconditional promise — so Vitals rendered a "Measure HRV"
+    /// button that spun for 45 s and failed, every time.
+    ///
+    /// This pins the exact set the ring now resolves to, from its own bytes.
+    func testTheRealR99BitmapResolvesToWhatTheRingActuallyHas() {
+        let claimed = YCBTSupportFunction.capabilities(from: r99SupportBitmap)
+        // What the ring itself claims — the four denials above start here, with a clear HRV bit.
+        XCTAssertEqual(claimed, [
+            .steps, .sleep, .heartRate, .bloodPressure, .spo2,
+            .manualHeartRate, .manualBloodPressure, .manualSpo2,
+        ])
+
+        let refined = ColmiSmartHealthCoordinator().refinedCapabilities(bitmapDerived: claimed)
+        XCTAssertEqual(refined, [
+            .heartRate, .spo2, .spo2History, .steps, .sleep, .remSleep, .battery,
+            .bloodPressure, .manualBloodPressure,
+            .manualHeartRate, .manualSpo2,
+            .realtimeHeartRate, .realtimeSteps,
+            .findDevice, .measurementInterval,
+        ])
+        // The gate earning its keep in both directions: BP was claimed (and a spot BP measurement on this
+        // ring returned 100/68), while nothing it stayed silent about is offered.
+        for absent: WearableCapability in [.hrv, .manualHrv, .temperature, .stress, .bloodSugar, .fatigue] {
+            XCTAssertFalse(refined.contains(absent), "the R99 does not claim \(absent.rawValue)")
+        }
+    }
+
+    /// **The TK5 is untouched by the R99 fix.** Its HRV is confirmed working from its own captures, and it
+    /// gates nothing — so it must still declare HRV as an unconditional baseline capability even when fed
+    /// the R99's own HRV-denying bitmap. (The R99 needed gating precisely because a family is not a SKU;
+    /// the TK5 family has one SKU, and it is the ring on the bench.)
+    func testTK5KeepsItsHRVThroughTheR99Fix() {
+        let tk5 = TK5Coordinator()
+        XCTAssertTrue(tk5.capabilities.isSuperset(of: [.hrv, .manualHrv]))
+        XCTAssertTrue(tk5.bitmapGatedCapabilities.isEmpty)
+
+        let refined = tk5.refinedCapabilities(
+            bitmapDerived: YCBTSupportFunction.capabilities(from: r99SupportBitmap)
+        )
+        XCTAssertEqual(refined, tk5.capabilities)
+        XCTAssertTrue(refined.contains(.hrv))
+        XCTAssertTrue(refined.contains(.manualHrv))
+    }
+
     /// The gated set resolves through B2's additive-only refinement formula: a silent ring keeps the
     /// baseline, a claiming ring gains exactly what it claimed, and nothing outside the pre-approved
     /// list can ever be added.

@@ -125,27 +125,35 @@ final class ColmiSmartHealthCoordinator: WearableCoordinator {
     /// a temperature or blood-pressure sensor at all — so anything sensor-dependent is deferred to
     /// `bitmapGatedCapabilities` and only claimed if the ring itself claims it.
     ///
+    /// **A baseline entry is an unconditional promise**: the refinement is additive-only, so the bitmap
+    /// can never take one back. That is why HRV is no longer here — see `bitmapGatedCapabilities`.
+    ///
     /// Two entries look like they belong in the gated set and deliberately don't, because they are
     /// *protocol* facts, not sensor facts — identical for every YCBT ring, and the TK5 (the one unit of
     /// this protocol we have on the bench) declares both as baseline:
     ///
     /// - `.measurementInterval` is the five `01 xx {enable, interval}` monitor writes. It is a settings
-    ///   screen, not a sensor; a ring that doesn't implement one of the five NAKs that one write.
+    ///   screen, not a sensor; a ring that doesn't implement one of the five NAKs that one write. The
+    ///   R99 proved this benign: it NAKed `01 45` (HRV) and `01 1c` (all-day BP) with `0xFC` and honoured
+    ///   the other three.
     /// - `.spo2History` is the all-day `05 1A` log. A ring without it answers the query with a no-data
     ///   header or `0xFC`, which `YCBTHistoryTransfer` skips permanently.
     ///
     /// Neither is named by any bit in `YCBTSupportFunction`, so gating them would not defer the decision
     /// — it would make them permanently unreachable (see `bitmapGatedCapabilities`).
     ///
-    /// **`.fatigue` is deliberately absent**, unlike on the TK5. It rides the body-data record (`05 33`)
-    /// and no bit names it, so we can neither gate it nor honestly promise it on hardware nobody has
-    /// connected yet — and unlike the two above, an unsupported claim here *is* user-visible: `.fatigue`
-    /// renders its own Vitals gauge, which would sit permanently at "No fatigue score yet". B6 (the
-    /// first real sync) is what decides; adding a capability then is a one-line change, and a card that
-    /// appears is a better surprise than one that never fills.
+    /// **`.findDevice` stays here on no evidence either way.** The R99's bitmap does *not* claim it
+    /// (byte 6 bit 4 is clear) and nobody has pressed Find Ring on one, so we have neither a working
+    /// buzz nor a refusal. Gating it would *remove* a button that may well work — the opposite trade from
+    /// HRV, where four independent denials said the button can never work. Left as a baseline promise,
+    /// recorded here as untested; the first person to press it on an R99 settles it.
+    ///
+    /// **`.fatigue` is deliberately absent**, unlike on the TK5. It rides the body-data record (`05 33`),
+    /// which the R99 answered with `0xFC` (unsupported key) — so on this ring it is not merely unnamed by
+    /// any bit, it is confirmed absent. Its Vitals gauge would sit permanently at "No fatigue score yet".
     let capabilities: Set<WearableCapability> = [
-        .heartRate, .spo2, .spo2History, .steps, .sleep, .remSleep, .battery, .hrv,
-        .manualHeartRate, .manualSpo2, .manualHrv,
+        .heartRate, .spo2, .spo2History, .steps, .sleep, .remSleep, .battery,
+        .manualHeartRate, .manualSpo2,
         .realtimeHeartRate, .realtimeSteps,
         .findDevice, .measurementInterval,
     ]
@@ -158,10 +166,28 @@ final class ColmiSmartHealthCoordinator: WearableCoordinator {
     /// bit can ever satisfy is not a deferred decision but a dead promise, permanently unreachable while
     /// reading as "supported if the ring says so". `PairingMatchingTests` asserts that invariant.
     ///
-    /// These are exactly the rows the gap analysis marks `❔` for this family: present in the protocol,
-    /// unknown per unit.
+    /// ## HRV moved here, and the R99 is why
+    ///
+    /// `.hrv`/`.manualHrv` used to be baseline — an unconditional promise this ring cannot keep. The
+    /// owner's `R99 54DC` (firmware 2.32) denies HRV **four independent ways** in one session:
+    ///
+    /// - its `02 01` bitmap leaves `ISHASHRV` (byte 1 bit 1) clear;
+    /// - `01 45` (the all-day HRV monitor) → `0xFC` unsupported key;
+    /// - `05 33` (the body-data history that carries HRV) → `0xFC`;
+    /// - `03 2f` with mode `0x0a` → status `0x01`, an outright refusal to start.
+    ///
+    /// The user pressed "Measure HRV", the ring never answered, and the app spun the full 45 s window
+    /// before failing. Gating both on the bitmap turns a broken button into an absent one — and costs a
+    /// ring that *does* claim HRV (the bits exist: byte 1 bit 1 and byte 23 bit 0) nothing at all.
+    /// `TK5Coordinator` is untouched: its HRV works, and it gates nothing.
+    ///
+    /// The same session settled the rest of this list on the same ring: `.bloodPressure` +
+    /// `.manualBloodPressure` were claimed and a spot BP measurement returned 100/68 — the gate working
+    /// as designed — while `.temperature`, `.stress` and `.bloodSugar` were not claimed and correctly
+    /// never appeared.
     let bitmapGatedCapabilities: Set<WearableCapability> = [
         .temperature, .bloodPressure, .stress, .bloodSugar, .manualBloodPressure,
+        .hrv, .manualHrv,
     ]
 
     let iconSystemName = "circle.circle.fill"

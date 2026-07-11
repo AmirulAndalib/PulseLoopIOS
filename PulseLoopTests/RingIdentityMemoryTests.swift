@@ -1,4 +1,5 @@
 import XCTest
+import SwiftData
 @testable import PulseLoop
 
 /// What `RingBLEClient` remembers about a ring *between* connections: its family, its exact catalog
@@ -83,5 +84,118 @@ final class RingIdentityMemoryTests: XCTestCase {
         client.installDriver(ColmiSmartHealthCoordinator.self)
         XCTAssertEqual(client.activeCapabilities, ColmiSmartHealthCoordinator().capabilities)
         XCTAssertFalse(client.activeCapabilities.contains(.temperature))
+    }
+
+    // MARK: - The name that reaches the store
+
+    private func identified(_ advertisedName: String?) -> PulseEvent {
+        .deviceIdentified(
+            deviceType: .colmiSmartHealth,
+            wearableModelID: "colmi-r99",
+            advertisedName: advertisedName,
+            capabilities: []
+        )
+    }
+
+    /// `Device.name` is what the human-facing surfaces read — the coach's device context, and the
+    /// diagnostics export's `wearableName` — and nothing ever wrote it. It kept the `Device()` default,
+    /// `"SMART_RING"` (the *jring's* name), so the owner's diagnostics for a Colmi R99 reported a jring:
+    /// the one field in the export a human reads first, naming the wrong ring.
+    func testTheAdvertisedNameBecomesTheDeviceName() throws {
+        let context = try TestSupport.makeContext()
+        let subscriber = EventPersistenceSubscriber(context: context)
+
+        subscriber.persist(identified("R99 54DC"))
+
+        let device = try XCTUnwrap(DeviceRepository.current(context: context))
+        XCTAssertEqual(device.name, "R99 54DC")
+        XCTAssertEqual(device.advertisedName, "R99 54DC")
+    }
+
+    /// A name a *user* chose survives. `.deviceIdentified` is re-published on every handshake (and again
+    /// whenever the capability bitmap refines the set), so anything that overwrites `name` unconditionally
+    /// would undo a rename on the next connect — seconds later. Only a placeholder is ever replaced.
+    func testAUserChosenNameIsNotClobberedByAReconnect() throws {
+        let context = try TestSupport.makeContext()
+        let subscriber = EventPersistenceSubscriber(context: context)
+        subscriber.persist(identified("R99 54DC"))
+
+        let device = try XCTUnwrap(DeviceRepository.current(context: context))
+        device.name = "Left hand"
+
+        subscriber.persist(identified("R99 54DC"))   // the reconnect's re-published identity
+
+        XCTAssertEqual(device.name, "Left hand")
+        XCTAssertEqual(device.advertisedName, "R99 54DC", "the advertised name is still recorded")
+    }
+
+    /// A connect with no advertised name to offer (state restoration, a cached peripheral) leaves the
+    /// name alone rather than blanking it.
+    func testAConnectWithNoAdvertisedNameLeavesTheNameAlone() throws {
+        let context = try TestSupport.makeContext()
+        let subscriber = EventPersistenceSubscriber(context: context)
+        subscriber.persist(identified("R99 54DC"))
+
+        subscriber.persist(identified(nil))
+
+        let device = try XCTUnwrap(DeviceRepository.current(context: context))
+        XCTAssertEqual(device.name, "R99 54DC")
+    }
+
+    /// **A ring swap must not leave the previous ring's name behind.** There is one `Device` row and it is
+    /// *reused* across pairings (`fetchDevices(context).first ?? Device()`), so an adopted name outlives
+    /// the ring it came from unless Forget clears it — and an adopted name is neither empty nor a
+    /// placeholder, so the "don't clobber a name the user chose" guard would then defend it against the new
+    /// ring's own advertisement forever.
+    ///
+    /// Pair an R99, forget it, pair a TK5, and `Device.name` stayed "R99 54DC" while `deviceType`,
+    /// `advertisedName` and `capabilities` all said TK5. The coach's `device_name` and the diagnostics
+    /// export's `wearableName` then confidently named the ring that was *gone* — strictly worse than the
+    /// old `SMART_RING` placeholder, because a real name reads as authoritative.
+    func testForgettingARingReleasesItsNameForTheNextOne() throws {
+        let context = try TestSupport.makeContext()
+        let subscriber = EventPersistenceSubscriber(context: context)
+        subscriber.persist(identified("R99 54DC"))
+
+        subscriber.persist(.deviceForgotten)
+        subscriber.persist(.deviceIdentified(
+            deviceType: .tk5, wearableModelID: "tk5", advertisedName: "TK5 1A2B", capabilities: []
+        ))
+
+        let device = try XCTUnwrap(DeviceRepository.current(context: context))
+        XCTAssertEqual(device.name, "TK5 1A2B", "the row must name the ring on the other end of the link")
+        XCTAssertEqual(device.advertisedName, "TK5 1A2B")
+        XCTAssertEqual(device.deviceType, .tk5)
+    }
+
+    /// Forget alone: nothing may keep naming a ring that is no longer paired, so the export taken between
+    /// Forget and the next pairing names nothing rather than the ring the user just removed.
+    func testForgettingARingLeavesNothingNamingIt() throws {
+        let context = try TestSupport.makeContext()
+        let subscriber = EventPersistenceSubscriber(context: context)
+        subscriber.persist(identified("R99 54DC"))
+
+        subscriber.persist(.deviceForgotten)
+
+        let device = try XCTUnwrap(DeviceRepository.current(context: context))
+        XCTAssertEqual(device.name, "")
+        XCTAssertNil(device.advertisedName)
+        XCTAssertNil(device.wearableModelID)
+    }
+
+    /// The new ring may not advertise a name at all (state restoration, a cached peripheral). It must then
+    /// fall back to *its own* family's placeholder — never inherit the forgotten ring's identity.
+    func testARingThatAdvertisesNoNameFallsBackToItsOwnFamily() throws {
+        let context = try TestSupport.makeContext()
+        let subscriber = EventPersistenceSubscriber(context: context)
+        subscriber.persist(identified("R99 54DC"))
+        subscriber.persist(.deviceForgotten)
+
+        subscriber.persist(.deviceIdentified(
+            deviceType: .tk5, wearableModelID: "tk5", advertisedName: nil, capabilities: []
+        ))
+
+        let device = try XCTUnwrap(DeviceRepository.current(context: context))
+        XCTAssertEqual(device.name, RingDeviceType.tk5.displayName)
     }
 }

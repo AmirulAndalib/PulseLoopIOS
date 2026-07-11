@@ -18,7 +18,12 @@ struct YCBTDecoder {
     /// Decode one validated frame into the events it carries. Dispatch is on the **group** first, exactly
     /// as `YCBTClientImpl.bleDataResponse` does — the key byte only means anything within its group
     /// (`0x00` is GetDeviceInfo in group 2, the live-status stream in group 6, and find-phone in group 4).
-    func decode(_ frame: YCBTFrame, now: Date = Date()) -> [RingDecodedEvent] {
+    ///
+    /// - Parameter startedMode: the mode of the `03 2f` **start** still awaiting its reply, or nil if the
+    ///   last live-measurement command we sent was a stop (or none was). The ring's reply carries a status
+    ///   but not a mode, so the decoder cannot know on its own *which* measurement a refusal refers to —
+    ///   `YCBTDriver`, the one thing that sees both directions, supplies it.
+    func decode(_ frame: YCBTFrame, now: Date = Date(), startedMode: UInt8? = nil) -> [RingDecodedEvent] {
         switch frame.type {
         case YCBTGroup.real:
             return decodeRealStream(frame, now: now)
@@ -30,12 +35,39 @@ struct YCBTDecoder {
         case YCBTGroup.get:
             return decodeGetReply(frame)
 
+        case YCBTGroup.appControl where frame.cmd == YCBTCommand.liveMeasurement:
+            return decodeMeasurementStartReply(frame.payload, startedMode: startedMode)
+
         case YCBTGroup.setting where frame.cmd == YCBTSettingKey.setTime:
             return [.timeSyncAck(timestamp: now)]
 
         default:
             return [.commandAck(commandId: frame.cmd)]
         }
+    }
+
+    // MARK: - AppControl replies (group 0x03)
+
+    /// The ring's answer to `03 2f {enable, mode}` — one status byte (§5.1 / `YCBTMeasurementMode.isAccepted`).
+    ///
+    /// `0x00` is "started", and is the only reply the app has ever acted on. Anything else is the firmware
+    /// declining: the R99 answers `0x01` to mode `0x0a` (HRV), a sensor it does not have. Surfaced as
+    /// `.measurementRejected` so the in-flight spot measurement can fail immediately instead of polling a
+    /// stream the ring already told us it will never send.
+    ///
+    /// Two things keep a *stray* refusal from cancelling the wrong measurement, and both are deliberate:
+    ///
+    /// 1. `startedMode` is nil unless a start is actually outstanding — a rejected **stop** is just an ack
+    ///    (nothing is in flight to cancel), and a duplicate/late reply finds the mode already cleared.
+    /// 2. The mode travels with the event, so `RingSyncCoordinator` can check it against the measurement
+    ///    it is actually running before failing anything.
+    private func decodeMeasurementStartReply(_ p: [UInt8], startedMode: UInt8?) -> [RingDecodedEvent] {
+        let ack: [RingDecodedEvent] = [.commandAck(commandId: YCBTCommand.liveMeasurement)]
+        // A status is exactly one byte (the SDK's own `isError` shape); anything else is not a verdict.
+        guard p.count == 1, let status = p.first, !YCBTMeasurementMode.isAccepted(status: status),
+              let mode = startedMode else { return ack }
+        ycbtLog.info("03 2f mode \(mode, privacy: .public) refused → status \(status, privacy: .public)")
+        return [.measurementRejected(mode: mode)]
     }
 
     // MARK: - Async live stream (be940003, group 0x06)

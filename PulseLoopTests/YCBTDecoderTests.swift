@@ -209,6 +209,141 @@ final class YCBTDecoderTests: XCTestCase {
         XCTAssertEqual(commandId, 0x0e)
     }
 
+    // MARK: AppControl replies (group 0x03) — the ring's verdict on a `03 2f` start
+
+    /// `03 2f` is answered with **one status byte and no mode**: `0x00` started, anything else refused.
+    /// The R99 refuses HRV (mode `0x0a` → `0x01`) because it has no HRV sensor, and we only know *which*
+    /// measurement was refused because the driver remembers the start it sent (`startedMode`).
+    func testMeasurementStartReplyDistinguishesAcceptanceFromRefusal() throws {
+        func reply(_ status: UInt8, startedMode: UInt8?) throws -> RingDecodedEvent {
+            let frame = try XCTUnwrap(YCBTFrame(validating: YCBTFrame.frame([0x03, 0x2f, status])))
+            return try XCTUnwrap(decoder.decode(frame, startedMode: startedMode).first)
+        }
+
+        guard case let .measurementRejected(mode) = try reply(0x01, startedMode: YCBTMeasurementMode.hrv) else {
+            return XCTFail("a non-zero `03 2f` status is the ring refusing to start the measurement")
+        }
+        XCTAssertEqual(mode, YCBTMeasurementMode.hrv)
+
+        // Status 0 is the ring *starting* the sweep — the reply every working measurement gets. If this
+        // read as a rejection, every HR/SpO₂/BP reading would abort itself before it began.
+        guard case .commandAck = try reply(0x00, startedMode: YCBTMeasurementMode.hrv) else {
+            return XCTFail("status 0x00 is an acceptance, not a rejection")
+        }
+
+        // A refusal with no start outstanding belongs to nothing (a rejected stop, a duplicate reply):
+        // it must not name a mode, because naming one is what cancels a measurement.
+        guard case .commandAck = try reply(0x01, startedMode: nil) else {
+            return XCTFail("a refusal that answers no start must stay an ack")
+        }
+    }
+
+    /// The driver is the only thing that sees both directions, so it is what pairs the modeless reply with
+    /// the start it came from — and what makes sure a *stray* refusal can't be attributed to anything.
+    @MainActor
+    func testDriverPairsARefusalWithTheStartItSentAndOnlyOnce() {
+        let driver = makeDriver()
+        let refusal = YCBTFrame.frame([0x03, 0x2f, 0x01])
+
+        driver.send(start: YCBTMeasurementMode.hrv)
+        guard case let .measurementRejected(mode) = driver.ingest(refusal, from: commandChannel).first else {
+            return XCTFail("the refusal belongs to the start the driver just framed")
+        }
+        XCTAssertEqual(mode, YCBTMeasurementMode.hrv)
+
+        // The start's one reply is spent: a duplicate or late frame answers no outstanding start.
+        guard case .commandAck = driver.ingest(refusal, from: commandChannel).first else {
+            return XCTFail("a second reply refers to no outstanding start")
+        }
+
+        // A rejected *stop* has no in-flight measurement to abort — it names no mode, so it stays an ack.
+        driver.send(stop: YCBTMeasurementMode.hrv)
+        guard case .commandAck = driver.ingest(refusal, from: commandChannel).first else {
+            return XCTFail("a rejected stop is an ack, not a rejected measurement")
+        }
+    }
+
+    /// **Two `03 2f` commands are routinely outstanding at once**, which is why the driver queues them
+    /// instead of remembering one.
+    ///
+    /// Framing happens when a command is *enqueued* (`RingBLEClient.enqueueWrite` calls `frame(_:)` on the
+    /// way into the serialized write queue), not when it reaches the wire — and every spot measurement ends
+    /// with `engine.stopX()` immediately followed by `restartWorkoutHeartRateIfActive()`, so during a
+    /// workout a stop and a start go into the queue back-to-back with both replies still owed.
+    ///
+    /// With one remembered mode the start overwrote the stop, the **stop's** `0x00` reply was then read as
+    /// the start's verdict and cleared it, and the start's real refusal decoded anonymously and was
+    /// swallowed — the ring said no and the user still watched the whole window run out, the exact failure
+    /// this path exists to kill.
+    @MainActor
+    func testAStopsReplyDoesNotConsumeTheModeOfTheStartQueuedBehindIt() {
+        let driver = makeDriver()
+
+        // What `measureSpO2()` emits while a workout is streaming HR: stop SpO₂, then restart HR.
+        driver.send(stop: YCBTMeasurementMode.spo2)
+        driver.send(start: YCBTMeasurementMode.heartRate)
+
+        // Reply 1 answers the stop. A stop names no measurement, so it can only ever be an ack …
+        guard case .commandAck = driver.ingest(YCBTFrame.frame([0x03, 0x2f, 0x00]), from: commandChannel).first else {
+            return XCTFail("the first reply answers the stop, which has no measurement to name")
+        }
+        // … and the HR start, still outstanding, keeps its mode for its own reply.
+        guard case let .measurementRejected(mode) =
+                driver.ingest(YCBTFrame.frame([0x03, 0x2f, 0x01]), from: commandChannel).first else {
+            return XCTFail("the second reply is the start's refusal — swallowing it is the bug")
+        }
+        XCTAssertEqual(mode, YCBTMeasurementMode.heartRate)
+    }
+
+    /// The wrong-cancel half of the same pipelining bug: a **NAKed stop** must not cancel the measurement
+    /// started right behind it. With one slot the start's mode was the only one held, so the stop's
+    /// non-zero status decoded as a refusal *of the start* — aborting a measurement the ring had accepted
+    /// and was busy running.
+    @MainActor
+    func testANakedStopCannotCancelTheMeasurementStartedBehindIt() {
+        let driver = makeDriver()
+
+        driver.send(stop: YCBTMeasurementMode.hrv)
+        driver.send(start: YCBTMeasurementMode.heartRate)
+
+        // The ring NAKs the stop (status 0x02). It refuses a *stop*: nothing is cancelled.
+        let events = driver.ingest(YCBTFrame.frame([0x03, 0x2f, 0x02]), from: commandChannel)
+        guard case .commandAck = events.first else {
+            return XCTFail("a refused stop must never be attributed to the start queued behind it")
+        }
+        // The HR start's own reply is still owed, and still pairs with HR.
+        guard case let .measurementRejected(mode) =
+                driver.ingest(YCBTFrame.frame([0x03, 0x2f, 0x01]), from: commandChannel).first else {
+            return XCTFail("the start's reply is still outstanding")
+        }
+        XCTAssertEqual(mode, YCBTMeasurementMode.heartRate)
+    }
+
+    /// A reconnect re-uses the driver, so commands the old link never answered must not pair with the new
+    /// link's replies: the fresh connection's first `03 2f` verdict would otherwise be stamped with a dead
+    /// command's mode.
+    @MainActor
+    func testAReconnectDropsTheCommandsTheOldLinkNeverAnswered() {
+        let driver = makeDriver()
+        driver.send(start: YCBTMeasurementMode.hrv)   // the ring drops out before replying
+
+        driver.connectionDidEnd()
+        driver.connectionDidStart()
+
+        guard case .commandAck = driver.ingest(YCBTFrame.frame([0x03, 0x2f, 0x01]), from: commandChannel).first else {
+            return XCTFail("the new connection owes nothing to a command the old one never answered")
+        }
+    }
+
+    /// A rejection is a verdict on a command, not data: it must never reach the metric store. It travels
+    /// on the raw-packet feed (whence `RingSyncCoordinator` reads it) and shows up in the debug trace.
+    func testARejectionProducesNoPulseEventButIsVisibleInTheDebugFeed() {
+        let rejected = RingDecodedEvent.measurementRejected(mode: YCBTMeasurementMode.hrv)
+        XCTAssertTrue(RingEventBridge.events(for: rejected).isEmpty)
+        XCTAssertEqual(rejected.kind, "measurement_rejected")
+        XCTAssertEqual(rejected.debugJSON, #"{"rejected_mode":10}"#)
+    }
+
     // MARK: Command channel (be940001, group 0x02)
 
     /// `02 00` is **GetDeviceInfo** (`CMD.KEY_Get.DeviceInfo == 0`), not "status": battery state at
@@ -288,4 +423,29 @@ final class YCBTDecoderTests: XCTestCase {
         XCTAssertEqual(YCBTBytes.u24([0x40, 0x19, 0x01], 0), 72_000)
         XCTAssertEqual(YCBTBytes.u24([0x00, 0x00], 0), 0, "a short buffer reads 0, never out of bounds")
     }
+
+    // MARK: Driver test support
+
+    /// Command replies come back on `be940001` — the same characteristic the app writes to.
+    private var commandChannel: CBUUID { CBUUID(string: YCBTUUIDs.command) }
+
+    @MainActor
+    private func makeDriver() -> YCBTDriver {
+        YCBTDriver(writer: SilentRingWriter())
+    }
+}
+
+/// A driver needs a writer (it ACKs DevControl pushes through one); nothing in these tests reads what it
+/// sends, so it drops everything.
+private final class SilentRingWriter: RingCommandWriter {
+    nonisolated deinit {}
+    func enqueue(_ command: Data) {}
+}
+
+/// The two commands `RingSyncCoordinator` actually emits, sent the way `RingBLEClient.enqueueWrite` does:
+/// through `frame(_:)`, which is where the driver records that a reply is owed.
+@MainActor
+private extension YCBTDriver {
+    func send(start mode: UInt8) { _ = frame(Data([0x03, 0x2f, 0x01, mode])) }
+    func send(stop mode: UInt8) { _ = frame(Data([0x03, 0x2f, 0x00, mode])) }
 }
