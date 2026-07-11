@@ -1,7 +1,7 @@
 import Foundation
 @preconcurrency import CoreBluetooth
 
-/// Coordinator for Colmi rings that ship with the **SmartHealth** app (the R09/R10 the owner has).
+/// Coordinator for Colmi rings that ship with the **SmartHealth** app (the owner's `R99 54DC`).
 ///
 /// Same product line as `ColmiCoordinator`, a completely different firmware: these speak YCBT — the
 /// byte-identical protocol the TK5 speaks — so the entire stack they build (`YCBTDriver` → encoder,
@@ -10,66 +10,112 @@ import Foundation
 /// **QRing** keep the GadgetBridge-derived `ColmiDriver`.
 ///
 /// The two are told apart at *pairing*, not on the wire — see `RingAppVariant`.
+///
+/// ## What the owner's ring taught us (the `R99 54DC` nRF Connect capture)
+///
+/// The first real SmartHealth-Colmi we have looked at. Its GATT is the TK5's, exactly: the YCBT
+/// service `BE940000-…` with `BE940001/2/3`, plus JieLi RCSP (`AE00`, unimplemented on purpose),
+/// Nordic UART, `FEE7` and standard Heart Rate. **Neither QRing service** (`6e40fff0…`, `de5bf728…`)
+/// is present — so it is definitively not a ring `ColmiDriver` could talk to — and, like the TK5, it
+/// does **not** advertise `be940000`, which is why recognition here has to be name-first.
+///
+/// It also settled the question the file was built around. Both YCBT rings we have now seen name
+/// themselves `<MODEL><SPACE><4 hex>` — `TK5 24AA`, `R99 54DC` — while every QRing-Colmi in the
+/// catalog uses an underscore (`R02_A1B2`, `COLMI R10_9C3F`, `R11C_BEEF`). Space-versus-underscore is
+/// a signal from real hardware in both families; the `1078` manufacturer marker is not (see below).
 @MainActor
 final class ColmiSmartHealthCoordinator: WearableCoordinator {
     nonisolated deinit {}   // skip the main-actor isolated-deinit hop (crashes on older sim runtimes)
 
     static let deviceType: RingDeviceType = .colmiSmartHealth
 
-    // MARK: - Advertisement constants — PROVISIONAL
+    // MARK: - Advertisement constants
 
-    /// ⚠️ **None of this has been checked against a real SmartHealth-Colmi advertisement.** We have no
-    /// capture yet (plan B0: the owner takes one with nRF Connect). These constants are a *hint* that
-    /// sets the default position of the pairing screen's app-type picker, and nothing more.
+    /// **Confirmed** by the `R99 54DC` capture: the GATT layout (identical to the TK5's), the absence of
+    /// the QRing services, and the `<MODEL> <4 hex>` naming convention.
     ///
-    /// The design deliberately does not depend on them being right. The user's explicit pick is what
+    /// **Still unknown**: the raw advertisement payload. The capture logged GATT discovery only — no
+    /// manufacturer-data hex, no advertised service-UUID list — so `manufacturerHexMarker` remains a
+    /// prediction carried over from the TK5, and that is exactly why it no longer decides anything on
+    /// its own. What would confirm it: an nRF Connect *scanner* capture (the raw scan record, not the
+    /// connected device's service list) of any SmartHealth-Colmi.
+    ///
+    /// The design still does not depend on any of this being right. The user's explicit pick is what
     /// selects the driver (`RingBLEClient.coordinatorType(preferredFamily:autoMatched:)`), so a
     /// heuristic that never fires costs a toggle the user has to flip — not a working connection — and
-    /// one that fires wrongly costs the same. That asymmetry is why this is a hint and not a decision:
-    /// a QRing-Colmi and a SmartHealth-Colmi can advertise the *identical* local name, so no
-    /// advertisement-only rule can ever be trusted to separate them.
-    ///
-    /// Refine exactly these two constants (and nothing else) once the capture exists.
+    /// one that fires wrongly costs the same. Matching is a hint that sets the picker's default.
     enum Advertisement {
-        /// The SmartHealth product code, matched as a **prefix of the manufacturer data** — i.e. in the
-        /// company-ID slot, which is where the only capture we have in this family puts it (the TK5's
-        /// `10786501…`; its trailing bytes are that model's own, so we match less than `TK5Coordinator`
-        /// does but at the same anchor).
+        /// The SmartHealth naming convention: model, one space, four hex digits. Both confirmed rings in
+        /// this family advertise this way (`TK5 24AA`, `R99 54DC`) and no QRing-Colmi does — every
+        /// Colmi-line pattern in the catalog is underscore-separated. That makes the *name*, not the
+        /// manufacturer data, the primary signal.
         ///
-        /// `BleHelper.filterDevice` merely *contains*-tests `1078` (and its siblings 1178/1278/1378/C5FE)
-        /// against the whole raw scan record — but it has no choice: it never parses out the AD
-        /// structures. We do (CoreBluetooth hands us the manufacturer data already isolated), and an
-        /// unanchored substring test over hex is not even byte-aligned: manufacturer bytes `a1 07 8f`
-        /// stringify to `"a1078f"` and would match. Colmi's manufacturer payload commonly embeds the MAC,
-        /// so an unlucky QRing-Colmi would be tagged as this family, defaulting the picker to the wrong
-        /// app for a ring we already support. Anchoring costs nothing and cannot do that.
+        /// Anchored end to end so the hex suffix is the whole tail: `Beats FADE` would satisfy it, but
+        /// only a name no catalog card claims ever reaches this test (see `matches`), and the four-hex
+        /// tail plus a bare model token is a narrow enough shape that the cost of a false positive — one
+        /// stray row in the pairing list, tagged with a family the user can override — stays trivial.
+        static let namePattern = "^[A-Za-z0-9]+( [A-Za-z0-9]+)* [0-9A-Fa-f]{4}$"
+
+        /// The Yucheng SDK's company ID (0x7810, little-endian ⇒ `1078`), matched as a **prefix of the
+        /// manufacturer data** — the company-ID slot, which is where the one capture in this family that
+        /// does include a scan record (the TK5's `10786501…`) puts it.
         ///
-        /// If the B0 capture shows a SmartHealth-Colmi carrying the code somewhere *other* than the first
-        /// two bytes, the fix is here and is one line: match on a byte-aligned index instead of a prefix.
+        /// **Demoted to corroborating evidence.** It used to be a hard requirement, and the R99 is why it
+        /// can't be: we have no advertisement for it at all, so requiring the marker would reject the one
+        /// ring in this family we actually own. Its absence therefore no longer vetoes a name match. It
+        /// still earns its keep in the other direction — a ring *nothing* names, carrying the Yucheng
+        /// company ID, is a YCBT ring, and this family (whose sensors are bitmap-gated rather than
+        /// assumed) is the conservative home for one.
+        ///
+        /// It is deliberately **not** allowed to override a name. A QRing-Colmi may well carry the same
+        /// company ID — every ring in this SDK family does, the TK5 included — so letting `1078` promote
+        /// an underscore-named Colmi would mis-tag a ring we already support fully, and default its
+        /// picker (and first connect) to a protocol its firmware does not speak. The name is the
+        /// evidence; the marker only fills the silence.
+        ///
+        /// Matched as a prefix, never as a substring: an unanchored test over hex is not even
+        /// byte-aligned (manufacturer bytes `a1 07 8f` stringify to `"a1078f"`), and Colmi's manufacturer
+        /// payload commonly embeds the MAC.
         static let manufacturerHexMarker = "1078"
 
         /// The QRing-flavoured Colmi rings advertise one of these. Presence is a positive disqualifier:
-        /// this ring answers to the *other* driver, so the conjunction below rejects it outright.
+        /// this ring answers to the *other* driver, so `matches` rejects it outright. The R99 advertises
+        /// neither — its GATT has no QRing service at all.
         static let qringServiceUUIDs: [CBUUID] = [
             CBUUID(string: ColmiUUIDs.serviceV1),
             CBUUID(string: ColmiUUIDs.serviceV2),
         ]
+
+        /// Does this local name follow the SmartHealth convention?
+        static func isSmartHealthName(_ name: String?) -> Bool {
+            guard let name, let regex = try? NSRegularExpression(pattern: namePattern) else { return false }
+            let range = NSRange(name.startIndex..<name.endIndex, in: name)
+            return regex.firstMatch(in: name, options: [], range: range) != nil
+        }
     }
 
-    /// The conjunction: a Colmi-line local name **and** the SmartHealth marker **and** no QRing service.
+    /// Name-first, with the catalog as the arbiter of *whose* name it is.
     ///
-    /// The name half reuses the catalog's own Colmi patterns rather than restating them — a card that
-    /// offers the SmartHealth app variant *is* the definition of "a Colmi-line name", and one list of
-    /// regexes is one list to keep right. The conjunction is what keeps this matcher off a TK5 (whose
-    /// `10786501…` carries the marker in the same slot — every ring in this SDK family does — but whose
-    /// card offers no variants, so the *name* half rejects it) and off any Colmi that advertises the
-    /// QRing service.
+    /// 1. A QRing service disqualifies outright — that ring answers to `ColmiDriver`.
+    /// 2. If a catalog card claims the name, the card decides: it must be one that can be this family
+    ///    **and** the name must follow the SmartHealth convention. That second half is what does the real
+    ///    work, because every Colmi card can be this family (they all offer both apps): it is the
+    ///    space-versus-underscore split that separates `R99 54DC` from `R02_A1B2`. A `TK5 24AA` is
+    ///    rejected by the first half instead — its card resolves to `.tk5` only — which is what keeps
+    ///    this coordinator, registered *ahead* of `TK5Coordinator`, off the TK5.
+    /// 3. Otherwise nobody names it: fall back to the manufacturer marker, standing aside for the TK5,
+    ///    whose fuller `10786501…` prefix is a confirmed identity and whose coordinator is checked after
+    ///    us. (`WearableModel.model(advertisedName:)` is nil here, so `TK5Coordinator` is being asked
+    ///    exactly the question we can't answer: "is this manufacturer data yours?")
     static func matches(name: String?, advertisement: AdvertisementInfo) -> Bool {
-        guard let model = WearableModel.model(advertisedName: name),
-              model.variant(for: deviceType) != nil else { return false }
+        guard !advertisement.serviceUUIDs.contains(where: { Advertisement.qringServiceUUIDs.contains($0) })
+        else { return false }
+        if let model = WearableModel.model(advertisedName: name) {
+            return model.families.contains(deviceType) && Advertisement.isSmartHealthName(name)
+        }
         guard let manufacturer = advertisement.manufacturerData,
               manufacturer.hexString.hasPrefix(Advertisement.manufacturerHexMarker) else { return false }
-        return !advertisement.serviceUUIDs.contains { Advertisement.qringServiceUUIDs.contains($0) }
+        return !TK5Coordinator.matches(name: name, advertisement: advertisement)
     }
 
     // MARK: - Capabilities

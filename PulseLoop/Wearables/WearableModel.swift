@@ -138,6 +138,30 @@ extension WearableModel {
     )
     static let colmiR12 = colmiFamily("colmi-r12", "Colmi R12", brand: "Colmi", pattern: "^COLMI R12_.*")
 
+    /// The R99 — the one SmartHealth-Colmi we have actually looked at (the owner's, captured with nRF
+    /// Connect as `R99 54DC`). It stays under the **Colmi** brand tab because that is where its owner
+    /// will look for it: it is a Colmi-line ring, it wears the Colmi ring art, and a brand tab of one
+    /// would only hide it. What it does *not* share with the other Colmi cards is its default family —
+    /// the capture shows the TK5's YCBT GATT and no QRing service at all, so `.colmiSmartHealth` is not
+    /// a guess here, it is the observed firmware.
+    ///
+    /// It keeps the app-variant picker anyway. The card would otherwise promise recovery it can't give:
+    /// `RingConnectFailure.message` tells a user whose connect stalls to "switch the app type and try
+    /// again", and `PairingView.variantRetry` needs an `otherVariant` to offer. One confirmed unit is
+    /// not a guarantee that no R99 ever shipped with QRing — the whole reason `RingAppVariant` exists —
+    /// so the picker stays and simply defaults the other way (the default is `family`, not the first
+    /// option; see `variant(picked:rowFamily:hinted:)`).
+    ///
+    /// No `imageName`: there is no R99 imageset, and a non-nil name that isn't registered renders an
+    /// *empty* platter rather than falling back. nil is the supported path — `RingArtView.fallbackImage`
+    /// is a generic Colmi ring, which is exactly what this is.
+    static let colmiR99 = WearableModel(
+        id: "colmi-r99", displayName: "Colmi R99", brand: "Colmi", family: .colmiSmartHealth,
+        tint: PulseColors.hrv, blurb: smartHealthBlurb,
+        advertisedNamePatterns: ["^R99 [0-9A-Fa-f]{4}$"],
+        appVariants: colmiAppVariants
+    )
+
     // TK5 — the YCBT protocol (be940 service, SmartHealth app), shared with the SmartHealth-flavoured
     // Colmi rings. Advertises as "TK5 <4 hex>", which is unambiguous, so it needs no app-variant picker.
     // Blurb mirrors `TK5Coordinator.capabilities`; the driver is `.limited` (see `supportLevel`).
@@ -153,23 +177,22 @@ extension WearableModel {
     static let yawellR11 = colmiFamily("yawell-r11", "Yawell R11", brand: "Yawell", pattern: "^R11_[0-9A-F]{4}$")
     static let h59 = colmiFamily("h59", "H59 Ring", brand: "H59", pattern: "^H59_.*")
 
-    /// Every Colmi-line ring is sold with one of two apps, and its advertised name doesn't say which —
-    /// so every Colmi card offers both. QRing is listed first: it is the mature, hardware-proven driver
-    /// and therefore the default when nothing in the scan hints otherwise.
-    ///
     /// The blurbs differ because the firmwares do. The SmartHealth one lists only what *every* YCBT ring
     /// certainly does (`ColmiSmartHealthCoordinator.capabilities`); its per-SKU sensors — temperature,
     /// blood pressure, stress — are claimed at connect time from the ring's own capability bitmap, so
     /// promising them on the card would be a promise we can't keep for every unit.
+    private static let qringBlurb = "HR · SpO₂ · HRV · Stress · Temp · Sleep"
+    private static let smartHealthBlurb = "HR · SpO₂ · HRV · Sleep · Steps"
+
+    /// Every Colmi-line ring is sold with one of two apps, so every Colmi card offers both — including
+    /// the R99, whose firmware we *have* confirmed (a confirmed unit is not a confirmed SKU).
+    ///
+    /// The order here is the picker's segment order, nothing more: which option a card *starts* on is
+    /// its own `family` (`variant(picked:rowFamily:hinted:)`), so one shared list serves both the
+    /// QRing-by-default cards and the SmartHealth-by-default R99.
     private static let colmiAppVariants: [AppVariantOption] = [
-        AppVariantOption(
-            variant: .qring, family: .colmiR02,
-            blurb: "HR · SpO₂ · HRV · Stress · Temp · Sleep"
-        ),
-        AppVariantOption(
-            variant: .smartHealth, family: .colmiSmartHealth,
-            blurb: "HR · SpO₂ · HRV · Sleep · Steps"
-        ),
+        AppVariantOption(variant: .qring, family: .colmiR02, blurb: qringBlurb),
+        AppVariantOption(variant: .smartHealth, family: .colmiSmartHealth, blurb: smartHealthBlurb),
     ]
 
     private static func colmiFamily(
@@ -182,7 +205,7 @@ extension WearableModel {
         // Asset-catalog image name matches the model id (see PulseLoop/Assets.xcassets).
         WearableModel(
             id: id, displayName: name, brand: brand, family: .colmiR02,
-            tint: PulseColors.hrv, blurb: "HR · SpO₂ · HRV · Stress · Temp · Sleep",
+            tint: PulseColors.hrv, blurb: qringBlurb,
             advertisedNamePatterns: [pattern], imageName: imageName ?? id,
             appVariants: colmiAppVariants
         )
@@ -227,6 +250,10 @@ extension WearableModel {
     /// though the scan had already identified both correctly. A row that the scan claimed knows better
     /// than a hint borrowed from its neighbour; only a deliberate pick beats it.
     ///
+    /// The last fallback is the card's **own default family**, not the first option in the picker: the
+    /// R99 lists the same two apps as every other Colmi card but starts on SmartHealth, because that is
+    /// the firmware its capture shows.
+    ///
     /// nil for a single-firmware card (no picker, no override — auto-detection exactly as before).
     func variant(
         picked: RingAppVariant?,
@@ -234,7 +261,7 @@ extension WearableModel {
         hinted: RingAppVariant?
     ) -> RingAppVariant? {
         guard !appVariants.isEmpty else { return nil }
-        return picked ?? rowFamily.flatMap(variant(for:)) ?? hinted ?? appVariants.first?.variant
+        return picked ?? rowFamily.flatMap(variant(for:)) ?? hinted ?? variant(for: family)
     }
 
     /// The family to *force* on a connect to one discovered row, or nil to leave the scan's auto-match
@@ -269,6 +296,7 @@ extension WearableModel {
     static let catalog: [WearableModel] = [
         jring,
         colmiR02, colmiR03, colmiR06, colmiR07, colmiR08, colmiR09, colmiR10, colmiR11, colmiR12,
+        colmiR99,
         yawellR05, yawellR10, yawellR11, h59,
         tk5,
     ]
