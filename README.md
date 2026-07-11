@@ -191,9 +191,6 @@ place to start — ping us in Discord and we'll point you at the right files.
 
 ## Acknowledgements
 
-- [@foureight84](https://github.com/foureight84) for the
-  [Android port](https://github.com/foureight84/PulseLoopAndroid).
-
 ### Contributors
 
 Thanks to everyone who's contributed to the iOS app 💜
