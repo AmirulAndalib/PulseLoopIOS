@@ -39,7 +39,7 @@ differ in exactly three ways:
 | | TK5 | SmartHealth-Colmi |
 |---|---|---|
 | **Advertisement** | `TK5 <4 hex>` + manufacturer prefix `10786501` — unambiguous, so it auto-detects | a Colmi-line name a *QRing* Colmi can advertise too, so PulseLoop asks the user which app their ring came with |
-| **SupportFunction bitmap** (`02 01`) | parsed and logged, but nothing is gated on it — one SKU, and it's the ring on the bench | **gates the per-SKU sensors**: temperature, BP, stress, blood sugar |
+| **SupportFunction bitmap** (`02 01`) | **gates the per-SKU sensors**: temperature, BP, stress, fatigue, blood sugar. HRV is *not* gated — it was observed working on this ring | **gates the per-SKU sensors**: temperature, BP, stress, blood sugar — *and* HRV, which the owner's R99 denies |
 | **chipScheme** (`02 1b`) | JieLi | ❓ unknown — it selects the OTA stack only, which PulseLoop doesn't implement |
 
 The practical consequence for the TK5: a fix to any `YCBT*` file fixes both rings, and a regression in
@@ -82,23 +82,40 @@ Full byte-level spec: **[YCBT protocol](../YCBT-Protocol.md)**.
 Everything here is decoded from the vendor SDK and covered by unit tests against fixture bytes. The
 right-hand column is the honest one: what a physical ring still has to confirm.
 
+**Ring-declared vs. baseline.** The rows marked **🔓 ring-declared** are no longer promised by the app
+at all: they are offered only if *this* unit's `02 01` capability bitmap sets their bit
+(`YCBTSupportFunction` → `TK5Coordinator.bitmapGatedCapabilities`). Everything else is a **baseline**
+promise — the app claims it unconditionally, and the bitmap can only ever *add*, never remove.
+
+The reason for the split is a sibling ring. The owner's **R99** (a Colmi on this same YCBT protocol)
+had HRV promised unconditionally, denied it four independent ways — bitmap bit clear, `01 45` → `0xFC`,
+`05 33` → `0xFC`, `03 2f` mode `0a` → outright refusal — and the "Measure HRV" button spun for 45 s and
+failed, every time. The TK5's temperature / stress / fatigue / blood-sugar claims rested on exactly the
+same kind of reasoning that produced that bug (*the SDK defines the record type*), and no TK5 has ever
+been seen producing one of those records. So the ring now says, and the app listens.
+
+**HRV is the exception that proves it**: it stays a baseline promise because it was *observed working on
+a TK5* (48 / 79 ms, cross-checked against the vendor app). Evidence from the hardware outranks a bit —
+and since no TK5 `02 01` reply has ever been captured, gating HRV could only risk losing a feature that
+demonstrably works.
+
 | Capability | Status | Needs on-device confirmation | Notes |
 |---|:---:|---|---|
 | Heart rate — spot | 🧪 | — | `03 2f` mode `00` → `06 01` stream; the standard `180D` char is deliberately ignored (see below) |
 | Heart rate — live | 🧪 | — | verified against the capture (climbed 82→86) |
 | Heart rate — history | 🧪 | — | `05 06` query, 6-byte records |
 | SpO₂ — spot | 🧪 | — | red/IR LED, `03 2f` mode `02` |
-| SpO₂ — history | 🧪 | — | dedicated `05 1A` log **and** the All record |
+| SpO₂ — history | 🧪 | — | dedicated `05 1A` log **and** the All record. Not separately gated: no bit names it — it is one of the SpO₂ sources `ISHASBLOODOXYGEN` already grants |
 | Steps / distance / calories | 🧪 | distance & calories byte offsets in the `06 00` live push | live push + `05 02` history buckets + the All record's cumulative counter |
 | Sleep (light / deep / awake) | 🧪 | — | `05 04` timeline; stage = `tag & 0x0F` |
-| REM sleep | 🧪 | — | stage tag `3` |
-| HRV | 🧪 | the three tail bytes of the `01 45` monitor enable | spot (`03 2f` mode `0a`) + the All and body-data records |
-| Blood pressure — spot | 🧪 | per-mode stop (`03 2f {00, 01}`) | `03 2f` mode `01`; no cuff calibration, so treat as a trend, not a number |
-| Blood pressure — history | 🧪 | — | dedicated `05 08` log + the All record |
-| Skin temperature | 🧪 | one real reading (the string-concat scale) | dedicated `05 1E` log + the All record; monitor enabled by `01 20` |
-| Stress | 🧪 | — | **ring-stored**, from the body-data record (`05 33`) — the SDK's `pressure` field |
-| Fatigue | 🧪 | — | body-data record — the SDK's `body` field |
-| Blood sugar | 🧪 | **one real reading — the scale is inferred, not observed** | All record @17 and the comprehensive record (`05 2F`); tenths of mmol/L → mg/dL |
+| REM sleep | 🧪 | — | stage tag `3` — a stage *inside* the timeline `ISHASSLEEP` grants, so no bit names it and it is not gated |
+| HRV | 🧪 | the three tail bytes of the `01 45` monitor enable | spot (`03 2f` mode `0a`) + the All and body-data records. **Baseline — observed on the ring** (see above) |
+| Blood pressure — spot | 🔓 | per-mode stop (`03 2f {00, 01}`) | ring-declared (`ISHASTESTBLOOD`, byte 15 bit 2). `03 2f` mode `01`; no cuff calibration, so treat as a trend, not a number |
+| Blood pressure — history | 🔓 | — | ring-declared (`ISHASBLOOD`, byte 0 bit 0). Dedicated `05 08` log + the All record |
+| Skin temperature | 🔓 | one real reading (the string-concat scale) | ring-declared (`ISHASTEMP`, byte 8 bit 0). Dedicated `05 1E` log + the All record; monitor enabled by `01 20` |
+| Stress | 🔓 | — | ring-declared (`IS_HAS_PRESSURE`, byte 22 bit 6). **Ring-stored**, from the body-data record (`05 33`) — the SDK's `pressure` field |
+| Fatigue | 🔓 | — | ring-declared on the **same bit as stress**: no `ISHASFATIGUE` exists, but the vendor app gates the whole `05 33` query on `IS_HAS_PRESSURE`, and fatigue (the SDK's `body` field) is a field of that one record. No body data ⇒ neither score |
+| Blood sugar | 🔓 | **one real reading — the scale is inferred, not observed** | ring-declared (`ISHASBLOODSUGAR`, byte 17 bit 3). All record @17 and the comprehensive record (`05 2F`); tenths of mmol/L → mg/dL |
 | Respiratory rate | 🧪 | — | All record @10 |
 | VO₂max | 🧪 | raw byte taken unscaled | body-data record @16 |
 | Battery level | 🧪 | — | in-band: `02 00` reply payload[5], plus the unprompted `06 15` push |

@@ -86,6 +86,40 @@ final class RingIdentityMemoryTests: XCTestCase {
         XCTAssertFalse(client.activeCapabilities.contains(.temperature))
     }
 
+    /// The TK5 gates its sensors now, so it needs the same two guarantees the R99 got — and this is the
+    /// one that protects an existing owner.
+    ///
+    /// **A TK5 whose bitmap already told us about a sensor keeps it**, even on a connect whose `02 01`
+    /// reply is lost or answered short: `installDriver` seeds from the remembered *refined* set, through
+    /// the same additive-only refinement, so a temperature card the ring earned does not blink out and
+    /// come back a second later on every launch.
+    ///
+    /// **And a first-ever TK5 connect that never sees a bitmap degrades to the baseline, not to nothing**
+    /// — HR, SpO₂, HRV, sleep and steps still work; only the unconfirmed sensors are withheld.
+    func testTK5CapabilityMemorySurvivesAConnectWithNoBitmap() {
+        let earnedTemperature = TK5Coordinator().capabilities.union([.temperature])
+        remember(capabilities: earnedTemperature)
+        let client = RingBLEClient(startManager: false)
+
+        client.installDriver(TK5Coordinator.self)   // no `.supportFunctions` follows
+
+        XCTAssertEqual(client.activeCapabilities, earnedTemperature)
+        XCTAssertTrue(client.activeCapabilities.contains(.temperature))
+    }
+
+    func testAFirstTK5ConnectWithNoBitmapDegradesToTheBaselineNotToNothing() {
+        remember()
+        let client = RingBLEClient(startManager: false)
+
+        client.installDriver(TK5Coordinator.self)
+
+        XCTAssertEqual(client.activeCapabilities, TK5Coordinator().capabilities)
+        XCTAssertTrue(client.activeCapabilities.isSuperset(of: [.heartRate, .spo2, .hrv, .sleep, .steps]))
+        for withheld: WearableCapability in [.temperature, .stress, .fatigue, .bloodSugar, .bloodPressure] {
+            XCTAssertFalse(client.activeCapabilities.contains(withheld))
+        }
+    }
+
     // MARK: - The name that reaches the store
 
     private func identified(_ advertisedName: String?) -> PulseEvent {

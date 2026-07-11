@@ -403,12 +403,18 @@ final class PairingMatchingTests: XCTestCase {
     // MARK: - SmartHealth-Colmi capabilities (B3)
 
     /// The two YCBT families drive one shared stack, so this family can only ever claim what the stack
-    /// implements — i.e. a subset of the (hardware-exercised) TK5's set. A capability outside that is a
-    /// card that can never fill.
+    /// implements — i.e. a subset of everything the TK5 could ever resolve to. A capability outside that
+    /// is a card that can never fill.
+    ///
+    /// "Could ever resolve to" is baseline ∪ gated on both sides now: the TK5 gates its own sensors too,
+    /// so comparing against its *baseline* alone would say the shared stack cannot deliver temperature —
+    /// which it plainly can, for either family, the moment a ring claims the bit.
     func testSmartHealthColmiClaimsNothingTheYCBTStackCannotDeliver() {
         let colmi = ColmiSmartHealthCoordinator()
+        let tk5 = TK5Coordinator()
         let everythingItCouldClaim = colmi.capabilities.union(colmi.bitmapGatedCapabilities)
-        XCTAssertTrue(everythingItCouldClaim.isSubset(of: TK5Coordinator().capabilities))
+        let everythingTheStackDelivers = tk5.capabilities.union(tk5.bitmapGatedCapabilities)
+        XCTAssertTrue(everythingItCouldClaim.isSubset(of: everythingTheStackDelivers))
         // It must not inherit jring-only or QRing-only actions the YCBT stack has no command for.
         for absent: WearableCapability in [.combinedVitalsMeasurement, .powerOff, .factoryReset] {
             XCTAssertFalse(everythingItCouldClaim.contains(absent), absent.rawValue)
@@ -416,13 +422,23 @@ final class PairingMatchingTests: XCTestCase {
     }
 
     /// A gate no bit can ever satisfy is not a deferred decision — it is a dead promise: it reads as
-    /// "supported if the ring says so" while being permanently unreachable. Every gated capability must
-    /// be derivable from the bitmap parser.
+    /// "supported if the ring says so" while being permanently unreachable. Every gated capability, in
+    /// *either* YCBT family, must be derivable from the bitmap parser.
+    ///
+    /// This is the invariant that shaped the `.fatigue` decision: it has no bit of its own, so it could
+    /// only be gated once `YCBTSupportFunction` derived it from the bit the vendor app actually gates its
+    /// record on (`IS_HAS_PRESSURE` — the whole `05 33` body-data query). Baseline entries are exempt:
+    /// they are promises we make on our own evidence, not deferrals to the ring.
     func testEveryGatedCapabilityIsDerivableFromTheBitmap() {
         let allOnes = [UInt8](repeating: 0xFF, count: 32)
         let derivable = YCBTSupportFunction.capabilities(from: allOnes)
-        XCTAssertFalse(ColmiSmartHealthCoordinator().bitmapGatedCapabilities.isEmpty)
-        XCTAssertTrue(ColmiSmartHealthCoordinator().bitmapGatedCapabilities.isSubset(of: derivable))
+        for coordinator in [ColmiSmartHealthCoordinator(), TK5Coordinator()] as [any WearableCoordinator] {
+            let gated = coordinator.bitmapGatedCapabilities
+            XCTAssertFalse(gated.isEmpty, "\(type(of: coordinator)) gates nothing")
+            XCTAssertTrue(gated.isSubset(of: derivable), "\(type(of: coordinator)): \(gated.subtracting(derivable))")
+            // A gated capability the baseline already grants would be a no-op wearing a gate's clothes.
+            XCTAssertTrue(coordinator.capabilities.isDisjoint(with: gated), "\(type(of: coordinator))")
+        }
     }
 
     /// The `02 01` bitmap the owner's `R99 54DC` (firmware 2.32) actually sent — 60 bytes, of which the
@@ -469,21 +485,115 @@ final class PairingMatchingTests: XCTestCase {
         }
     }
 
-    /// **The TK5 is untouched by the R99 fix.** Its HRV is confirmed working from its own captures, and it
-    /// gates nothing — so it must still declare HRV as an unconditional baseline capability even when fed
-    /// the R99's own HRV-denying bitmap. (The R99 needed gating precisely because a family is not a SKU;
-    /// the TK5 family has one SKU, and it is the ring on the bench.)
+    /// **The TK5 keeps its HRV — and only its HRV — through the R99 fix.**
+    ///
+    /// The R99 taught the TK5 the same lesson, but not the same conclusion, because the evidence points
+    /// the other way. The TK5's HRV was *observed on the ring* (48 / 79 ms, cross-checked against the
+    /// vendor app); the R99's was denied four independent ways. So HRV stays an unconditional baseline
+    /// promise on the TK5 even when fed the R99's own HRV-denying bitmap — a bitmap can never remove a
+    /// baseline capability, which is exactly what makes a baseline entry the place for something we have
+    /// *seen work*. (It also could only lose: no TK5 `02 01` reply has ever been captured, and
+    /// `.manualHrv` sits at byte 23 behind the SDK's 24-byte block gate.)
+    ///
+    /// What the TK5 no longer promises unconditionally is the sensors nobody has seen it use.
     func testTK5KeepsItsHRVThroughTheR99Fix() {
         let tk5 = TK5Coordinator()
         XCTAssertTrue(tk5.capabilities.isSuperset(of: [.hrv, .manualHrv]))
-        XCTAssertTrue(tk5.bitmapGatedCapabilities.isEmpty)
+        XCTAssertTrue(tk5.bitmapGatedCapabilities.isDisjoint(with: [.hrv, .manualHrv]))
 
         let refined = tk5.refinedCapabilities(
             bitmapDerived: YCBTSupportFunction.capabilities(from: r99SupportBitmap)
         )
-        XCTAssertEqual(refined, tk5.capabilities)
         XCTAssertTrue(refined.contains(.hrv))
         XCTAssertTrue(refined.contains(.manualHrv))
+    }
+
+    /// **A TK5 that claims nothing gets its baseline, and not one sensor more.** The bug this fixes: the
+    /// TK5 baselined `.temperature`, `.stress`, `.fatigue` and `.bloodSugar` because the *SDK* defines
+    /// their record types (`05 1E`, `05 33`, `05 2F`) — not because a TK5 was ever seen producing one. A
+    /// baseline entry is an unconditional promise, so those four rendered cards, and "Measure now"
+    /// buttons, that may never fill. The R99 is what that costs when the ring disagrees.
+    ///
+    /// A ring that claims nothing — an all-zero bitmap, a truncated reply, or no reply at all — now
+    /// resolves to exactly the TK5's baseline, and not one sensor more.
+    func testTK5WithASensorDenyingBitmapResolvesToItsBaselineOnly() {
+        let tk5 = TK5Coordinator()
+        let expectedBaseline: Set<WearableCapability> = [
+            .heartRate, .spo2, .spo2History, .steps, .battery,
+            .hrv, .manualHrv,
+            .sleep, .remSleep,
+            .manualHeartRate, .manualSpo2,
+            .realtimeHeartRate, .realtimeSteps,
+            .findDevice, .measurementInterval,
+        ]
+        XCTAssertEqual(tk5.capabilities, expectedBaseline)
+
+        let claimsNothing = YCBTSupportFunction.capabilities(from: [UInt8](repeating: 0, count: 27))
+        XCTAssertEqual(claimsNothing, [])
+        for derived in [Set<WearableCapability>(), claimsNothing] {
+            let refined = tk5.refinedCapabilities(bitmapDerived: derived)
+            XCTAssertEqual(refined, expectedBaseline)
+            for absent: WearableCapability in [
+                .temperature, .stress, .fatigue, .bloodSugar, .bloodPressure, .manualBloodPressure,
+            ] {
+                XCTAssertFalse(refined.contains(absent), "an unclaimed \(absent.rawValue) must not be offered")
+            }
+        }
+    }
+
+    /// The gate is per-bit, not all-or-nothing — so a *partly* claiming ring gets exactly the parts it
+    /// claimed. Fed the R99's real bytes (the only YCBT bitmap we have from hardware): it claims BP and
+    /// on-demand BP — and a spot BP on that ring really did return 100/68 — while staying silent about
+    /// temperature, stress, fatigue and blood sugar, which are therefore withheld.
+    func testTK5WithThePartlyClaimingR99BitmapGetsOnlyWhatWasClaimed() {
+        let tk5 = TK5Coordinator()
+        let refined = tk5.refinedCapabilities(
+            bitmapDerived: YCBTSupportFunction.capabilities(from: r99SupportBitmap)
+        )
+        XCTAssertEqual(refined, tk5.capabilities.union([.bloodPressure, .manualBloodPressure]))
+        for absent: WearableCapability in [.temperature, .stress, .fatigue, .bloodSugar] {
+            XCTAssertFalse(refined.contains(absent), "an unclaimed \(absent.rawValue) must not be offered")
+        }
+    }
+
+    /// …and a TK5 whose bitmap claims the sensors gets them — every one of them, so nothing the ring
+    /// really has was lost in the move. The union is the *old* unconditional set exactly.
+    func testTK5WithASensorClaimingBitmapResolvesToTheFullSet() {
+        let tk5 = TK5Coordinator()
+        let claimsEverything = YCBTSupportFunction.capabilities(from: [UInt8](repeating: 0xFF, count: 27))
+        let refined = tk5.refinedCapabilities(bitmapDerived: claimsEverything)
+
+        XCTAssertEqual(refined, [
+            .heartRate, .spo2, .spo2History, .steps, .battery,
+            .hrv, .manualHrv, .bloodPressure, .manualBloodPressure,
+            .temperature, .stress, .fatigue, .bloodSugar,
+            .sleep, .remSleep,
+            .manualHeartRate, .manualSpo2,
+            .realtimeHeartRate, .realtimeSteps,
+            .findDevice, .measurementInterval,
+        ])
+        XCTAssertEqual(refined, tk5.capabilities.union(tk5.bitmapGatedCapabilities))
+    }
+
+    /// **`.fatigue` is gated on the stress bit, because the ring gives them one switch.** There is no
+    /// `ISHASFATIGUE` in the SDK; what there is, is `DataSyncUtils` gating the *entire* body-data query
+    /// (`05 33` — the record that carries both scores, as its `pressure` and `body` fields) on
+    /// `IS_HAS_PRESSURE`. A ring with that bit clear is never even asked for the record, so it can no more
+    /// produce a fatigue score than a stress one. The two therefore arrive and depart together.
+    func testFatigueAndStressAreClaimedTogetherOrNotAtAll() {
+        let tk5 = TK5Coordinator()
+        var bodyDataRing = [UInt8](repeating: 0, count: 27)
+        bodyDataRing[22] = 1 << 6                                        // IS_HAS_PRESSURE
+
+        let claimed = YCBTSupportFunction.capabilities(from: bodyDataRing)
+        XCTAssertEqual(claimed, [.stress, .fatigue])
+
+        let refined = tk5.refinedCapabilities(bitmapDerived: claimed)
+        XCTAssertEqual(refined, tk5.capabilities.union([.stress, .fatigue]))
+        // Never one without the other, whichever way the bit falls.
+        XCTAssertEqual(refined.contains(.stress), refined.contains(.fatigue))
+        let silent = tk5.refinedCapabilities(bitmapDerived: [])
+        XCTAssertEqual(silent.contains(.stress), silent.contains(.fatigue))
     }
 
     /// The gated set resolves through B2's additive-only refinement formula: a silent ring keeps the

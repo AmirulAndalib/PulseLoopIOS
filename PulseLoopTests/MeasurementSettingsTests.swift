@@ -70,9 +70,18 @@ final class MeasurementSettingsTests: XCTestCase {
     /// SmartHealth's own BP screen sends (`appStartMeasurement(1, 1)`); the reading streams back on
     /// `06 03`. The note here used to claim the TK5 had no on-demand BP command. Colmi has no BP sensor
     /// at all.
+    ///
+    /// The TK5's BP is a *command* the stack has and a *sensor* nobody has confirmed on the ring, so it
+    /// is bitmap-gated (`ISHASBLOOD` / `ISHASTESTBLOOD`) rather than promised: what this asserts is that
+    /// the family can reach it at all, i.e. that a TK5 which claims the bits gets the button.
     func testManualBloodPressureRequiresALiveBPMode() {
         XCTAssertTrue(JringCoordinator().capabilities.contains(.manualBloodPressure))
-        XCTAssertTrue(TK5Coordinator().capabilities.contains(.manualBloodPressure))
+        let tk5 = TK5Coordinator()
+        XCTAssertTrue(tk5.bitmapGatedCapabilities.contains(.manualBloodPressure))
+        XCTAssertTrue(
+            tk5.refinedCapabilities(bitmapDerived: [.bloodPressure, .manualBloodPressure])
+                .contains(.manualBloodPressure)
+        )
         XCTAssertFalse(ColmiCoordinator().capabilities.contains(.manualBloodPressure))
         XCTAssertFalse(ColmiCoordinator().capabilities.contains(.bloodPressure))
     }

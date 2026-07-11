@@ -437,6 +437,24 @@ enum YCBTSupportFunction {
         Bit(byte: 17, bit: 3, minLength: 18, capability: .bloodSugar),     // ISHASBLOODSUGAR
         Bit(byte: 22, bit: 6, minLength: 23, capability: .stress),         // IS_HAS_PRESSURE
 
+        // **Fatigue rides the stress bit** — the one entry where two capabilities share a bit, because
+        // the *ring* gives them one switch. There is no `ISHASFATIGUE` anywhere in the SDK (no `FATIGUE`,
+        // no `TIRED`, no 疲劳), and the vendor app has no fatigue home card for `checkedFunction` to gate.
+        // What it has instead is `DataSyncUtils.syncData`, which gates the **whole body-data history
+        // query** — `Health_History_Body_Data`, our `05 33` — on `IS_HAS_PRESSURE` and nothing else:
+        //
+        //     if (YCBTClient.isSupportFunction(FunctionConstant.IS_HAS_PRESSURE)) {
+        //         arrayList.add(DATATYPE.Health_History_Body_Data);
+        //     }
+        //
+        // Stress (`pressureInteger`) and fatigue (`bodyInteger`) are two fields of that one record
+        // (`DataUnpack.unpackBodyData`), so a ring with the bit clear is never even *asked* for the
+        // record — the vendor app can no more show a fatigue score on it than a stress one. Deriving both
+        // from byte 22 bit 6 reproduces exactly that, and is what lets `.fatigue` be gated at all: an
+        // ungated `.fatigue` is an unconditional promise (the R99 answered `05 33` with `0xFC`), and a
+        // gate no bit can satisfy is a dead one (`PairingMatchingTests`).
+        Bit(byte: 22, bit: 6, minLength: 23, capability: .fatigue),        // IS_HAS_PRESSURE (same record)
+
         // Find-my-ring. `DeviceSupportFunctionUtil.isHasFindDevice` reads it, and `MeAntiLostActivity`
         // hides the whole screen without it.
         Bit(byte: 6, bit: 4, minLength: 14, capability: .findDevice),      // ISHASFINDDEVICE
@@ -461,9 +479,11 @@ enum YCBTSupportFunction {
     //   power-off command, so a derived `.factoryReset`/`.powerOff` could never be honoured.
     // • IS_HAS_BATTERY_INFO_UPLOAD (22.5) — declares the unsolicited `06 15` push, not whether battery is
     //   readable. Battery is in-band on `02 00` for every YCBT ring, so `.battery` stays a baseline.
-    // • `.remSleep`, `.spo2History`, `.fatigue` — no bit names them. They are sub-features of bits that
-    //   don't distinguish them (REM-ness of the sleep timeline, the all-day `05 1A` SpO₂ log, the
-    //   body-data record's fatigue field), so the family's baseline stays the only source for them.
+    // • `.remSleep`, `.spo2History` — no bit names them, and no *caller* gates them separately either.
+    //   They are sub-features of bits that don't distinguish them: REM is a stage tag inside the `05 04`
+    //   timeline `ISHASSLEEP` already grants, and the all-day `05 1A` log is one of the SpO₂ sources
+    //   `ISHASBLOODOXYGEN` grants. A family's baseline is therefore the only source for them — and,
+    //   unlike `.fatigue` above, there is nothing to defer to: no bit's *behaviour* implies them.
     // • `.measurementInterval` — IS_HAS_INDEPENDENT_AUTOMATIC_TIME_MEASUREMENT (20.5) is the nearest, but
     //   "independent" is unpinned by any caller: it may mean "has per-metric intervals" or "has an
     //   interval at all", and those gate different screens.

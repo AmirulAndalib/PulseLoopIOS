@@ -25,31 +25,36 @@ final class YCBTSupportFunctionTests: XCTestCase {
 
     // MARK: - Bit → capability mapping
 
-    /// Each mapped bit, in isolation, yields exactly its own capability and nothing else. This is the
-    /// table's regression net: a transposed byte or bit index shows up here as a wrong capability.
+    /// Each mapped bit, in isolation, yields exactly its own capability (or capabilities) and nothing
+    /// else. This is the table's regression net: a transposed byte or bit index shows up here as a wrong
+    /// capability.
+    ///
+    /// `IS_HAS_PRESSURE` is the one bit that yields **two**, because the ring gives them one switch: the
+    /// vendor app gates the entire body-data query (`05 33`) on it, and stress (`pressure`) and fatigue
+    /// (`body`) are two fields of that one record.
     func testEachMappedBitYieldsExactlyItsCapability() {
-        let expected: [(byte: Int, bit: Int, capability: WearableCapability)] = [
-            (0, 7, .steps),               // ISHASSTEPCOUNT
-            (0, 6, .sleep),               // ISHASSLEEP
-            (0, 3, .heartRate),           // ISHASHEARTRATE
-            (0, 0, .bloodPressure),       // ISHASBLOOD
-            (1, 3, .spo2),                // ISHASBLOODOXYGEN
-            (1, 1, .hrv),                 // ISHASHRV
-            (6, 4, .findDevice),          // ISHASFINDDEVICE
-            (8, 0, .temperature),         // ISHASTEMP
-            (15, 1, .manualHeartRate),    // ISHATESTHEART
-            (15, 2, .manualBloodPressure),// ISHASTESTBLOOD
-            (15, 3, .manualSpo2),         // ISHASTESTSPO2
-            (17, 3, .bloodSugar),         // ISHASBLOODSUGAR
-            (22, 6, .stress),             // IS_HAS_PRESSURE
-            (23, 0, .manualHrv),          // IS_HAS_HRV_MEASUREMENT
+        let expected: [(byte: Int, bit: Int, capabilities: Set<WearableCapability>)] = [
+            (0, 7, [.steps]),               // ISHASSTEPCOUNT
+            (0, 6, [.sleep]),               // ISHASSLEEP
+            (0, 3, [.heartRate]),           // ISHASHEARTRATE
+            (0, 0, [.bloodPressure]),       // ISHASBLOOD
+            (1, 3, [.spo2]),                // ISHASBLOODOXYGEN
+            (1, 1, [.hrv]),                 // ISHASHRV
+            (6, 4, [.findDevice]),          // ISHASFINDDEVICE
+            (8, 0, [.temperature]),         // ISHASTEMP
+            (15, 1, [.manualHeartRate]),    // ISHATESTHEART
+            (15, 2, [.manualBloodPressure]),// ISHASTESTBLOOD
+            (15, 3, [.manualSpo2]),         // ISHASTESTSPO2
+            (17, 3, [.bloodSugar]),         // ISHASBLOODSUGAR
+            (22, 6, [.stress, .fatigue]),   // IS_HAS_PRESSURE — the whole `05 33` record
+            (23, 0, [.manualHrv]),          // IS_HAS_HRV_MEASUREMENT
         ]
         for entry in expected {
             let payload = bitmap(length: 27, set: [(entry.byte, entry.bit)])
             XCTAssertEqual(
                 YCBTSupportFunction.capabilities(from: payload),
-                [entry.capability],
-                "byte \(entry.byte) bit \(entry.bit) should map to \(entry.capability) alone"
+                entry.capabilities,
+                "byte \(entry.byte) bit \(entry.bit) should map to \(entry.capabilities) alone"
             )
         }
     }
@@ -75,7 +80,7 @@ final class YCBTSupportFunctionTests: XCTestCase {
             YCBTSupportFunction.capabilities(from: allOnes),
             [
                 .steps, .sleep, .heartRate, .bloodPressure, .spo2, .hrv, .findDevice, .temperature,
-                .bloodSugar, .stress,
+                .bloodSugar, .stress, .fatigue,
                 .manualHeartRate, .manualBloodPressure, .manualSpo2, .manualHrv,
             ]
         )
@@ -143,10 +148,14 @@ final class YCBTSupportFunctionTests: XCTestCase {
         )
     }
 
-    /// The same block rule at the far end of the array: stress needs 23 bytes, manual-HRV needs 24.
+    /// The same block rule at the far end of the array: stress (and, on the same bit, fatigue) needs
+    /// 23 bytes, manual-HRV needs 24.
     func testTrailingBlocksNeedTheirOwnLengths() {
         XCTAssertEqual(YCBTSupportFunction.capabilities(from: bitmap(length: 22, set: [(22, 6)])), [])
-        XCTAssertEqual(YCBTSupportFunction.capabilities(from: bitmap(length: 23, set: [(22, 6)])), [.stress])
+        XCTAssertEqual(
+            YCBTSupportFunction.capabilities(from: bitmap(length: 23, set: [(22, 6)])),
+            [.stress, .fatigue]
+        )
         XCTAssertEqual(YCBTSupportFunction.capabilities(from: bitmap(length: 23, set: [(23, 0)])), [])
         XCTAssertEqual(YCBTSupportFunction.capabilities(from: bitmap(length: 24, set: [(23, 0)])), [.manualHrv])
     }
@@ -202,11 +211,12 @@ final class YCBTSupportFunctionTests: XCTestCase {
         XCTAssertEqual(refined, [.heartRate, .steps, .battery])
     }
 
-    /// A family that gates nothing is bit-for-bit unaffected by any bitmap — the zero-regression
-    /// property that keeps jring, QRing-Colmi and the TK5 out of this feature's blast radius.
+    /// A family that gates nothing is bit-for-bit unaffected by any bitmap — the zero-regression property
+    /// that keeps jring and QRing-Colmi out of this feature's blast radius. (Neither speaks YCBT, so
+    /// neither has a bitmap to consult in the first place; both YCBT families now gate.)
     @MainActor
     func testFamilyThatGatesNothingIsUnaffectedByAnyBitmap() {
-        for coordinator in [TK5Coordinator(), JringCoordinator(), ColmiCoordinator()] as [any WearableCoordinator] {
+        for coordinator in [JringCoordinator(), ColmiCoordinator()] as [any WearableCoordinator] {
             XCTAssertTrue(coordinator.bitmapGatedCapabilities.isEmpty)
             let refined = coordinator.refinedCapabilities(bitmapDerived: YCBTSupportFunction.capabilities(from: allOnes))
             XCTAssertEqual(refined, coordinator.capabilities, "\(type(of: coordinator)) must ignore the bitmap")
@@ -234,7 +244,7 @@ final class YCBTSupportFunctionTests: XCTestCase {
         guard case let .supportFunctions(claimed) = events.first else {
             return XCTFail("expected .supportFunctions, got \(events)")
         }
-        XCTAssertEqual(claimed, [.heartRate, .spo2, .stress])
+        XCTAssertEqual(claimed, [.heartRate, .spo2, .stress, .fatigue])
     }
 
     /// The `02 1b` reply reaches the debug feed with its value (`InnerUtils.isJieLiChipScheme`: 3/4/5).

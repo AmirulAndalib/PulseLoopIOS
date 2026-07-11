@@ -148,9 +148,14 @@ final class ColmiSmartHealthCoordinator: WearableCoordinator {
     /// HRV, where four independent denials said the button can never work. Left as a baseline promise,
     /// recorded here as untested; the first person to press it on an R99 settles it.
     ///
-    /// **`.fatigue` is deliberately absent**, unlike on the TK5. It rides the body-data record (`05 33`),
-    /// which the R99 answered with `0xFC` (unsupported key) — so on this ring it is not merely unnamed by
-    /// any bit, it is confirmed absent. Its Vitals gauge would sit permanently at "No fatigue score yet".
+    /// **`.fatigue` is deliberately absent, from *both* lists.** It rides the body-data record (`05 33`),
+    /// which the R99 answered with `0xFC` (unsupported key): on this ring it is confirmed absent, so a
+    /// baseline entry would leave its Vitals gauge permanently at "No fatigue score yet". It is not in
+    /// `bitmapGatedCapabilities` either, though it now *could* be — `YCBTSupportFunction` derives it from
+    /// `IS_HAS_PRESSURE`, the bit the vendor app gates the whole body-data query on (see the bit table,
+    /// and `TK5Coordinator`, which gates it that way). Gating it here would be a provable no-op — the R99
+    /// leaves that bit clear — so it stays out until a SmartHealth-Colmi that *sets* it turns up and can
+    /// say whether its `body` field is real. Nothing in this family has ever produced a fatigue score.
     let capabilities: Set<WearableCapability> = [
         .heartRate, .spo2, .spo2History, .steps, .sleep, .remSleep, .battery,
         .manualHeartRate, .manualSpo2,
@@ -179,7 +184,10 @@ final class ColmiSmartHealthCoordinator: WearableCoordinator {
     /// The user pressed "Measure HRV", the ring never answered, and the app spun the full 45 s window
     /// before failing. Gating both on the bitmap turns a broken button into an absent one — and costs a
     /// ring that *does* claim HRV (the bits exist: byte 1 bit 1 and byte 23 bit 0) nothing at all.
-    /// `TK5Coordinator` is untouched: its HRV works, and it gates nothing.
+    ///
+    /// The TK5 took the same lesson and now gates its own sensor set — but it keeps `.hrv`/`.manualHrv`
+    /// as baseline, because on *that* ring HRV was observed working (48 / 79 ms, cross-checked against
+    /// the vendor app). Same discipline, opposite evidence, opposite conclusion; see `TK5Coordinator`.
     ///
     /// The same session settled the rest of this list on the same ring: `.bloodPressure` +
     /// `.manualBloodPressure` were claimed and a spot BP measurement returned 100/68 — the gate working

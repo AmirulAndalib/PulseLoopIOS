@@ -164,10 +164,12 @@ extension WearableModel {
 
     // TK5 — the YCBT protocol (be940 service, SmartHealth app), shared with the SmartHealth-flavoured
     // Colmi rings. Advertises as "TK5 <4 hex>", which is unambiguous, so it needs no app-variant picker.
-    // Blurb mirrors `TK5Coordinator.capabilities`; the driver is `.limited` (see `supportLevel`).
+    // Blurb mirrors `TK5Coordinator.capabilities` — the *baseline*, so it no longer promises BP: like the
+    // rest of the TK5's per-SKU sensors, on-demand BP is now claimed from the ring's own capability
+    // bitmap at connect time. The driver is `.limited` (see `supportLevel`).
     static let tk5 = WearableModel(
         id: "tk5", displayName: "TK5", brand: "TK", family: .tk5,
-        tint: PulseColors.spo2, blurb: "HR · SpO₂ · HRV · BP · Sleep",
+        tint: PulseColors.spo2, blurb: "HR · SpO₂ · HRV · Sleep · Steps",
         advertisedNamePatterns: ["^TK5 ?[0-9A-Fa-f]{0,4}$"], imageName: "tk5"
     )
 

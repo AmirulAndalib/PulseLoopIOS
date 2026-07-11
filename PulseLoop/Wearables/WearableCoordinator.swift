@@ -74,8 +74,8 @@ protocol WearableCoordinator {
 extension WearableCoordinator {
     var displayName: String { Self.deviceType.displayName }
 
-    /// Nothing is bitmap-gated unless a family opts in, so jring / QRing-Colmi / TK5 keep their static
-    /// sets and never consult a bitmap.
+    /// Nothing is bitmap-gated unless a family opts in, so jring / QRing-Colmi — neither of which speaks
+    /// YCBT, and so has no bitmap to consult — keep their static sets. Both YCBT families opt in.
     var bitmapGatedCapabilities: Set<WearableCapability> { [] }
 
     /// Fold a device-reported capability bitmap into this family's capability set.

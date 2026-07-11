@@ -30,46 +30,97 @@ final class TK5Coordinator: WearableCoordinator {
         return false
     }
 
-    /// Everything the ring stores and `YCBTHealthRecords` decodes: live + history HR, SpO₂ (live *and*
-    /// the all-day `05 1A` log), day steps, HRV, blood pressure, temperature, blood sugar, the
-    /// deep/light/REM sleep timeline, and the in-band battery.
+    /// The floor: what the TK5 has been *seen* doing, plus what every YCBT ring does regardless of which
+    /// sensors its SKU carries. Live + history HR, SpO₂ (live *and* the all-day `05 1A` log), day steps,
+    /// HRV, the deep/light/REM sleep timeline, and the in-band battery.
     ///
-    /// **Stress and fatigue are ring-stored, not app-derived**: the body-data record (`05 33`) carries
-    /// them as the SDK's `pressure` and `body` fields, alongside VO₂max and the HRV frequency-domain
-    /// metrics. Temperature likewise has both a dedicated log (`05 1E`) and a field in the All record.
+    /// **A baseline entry is an unconditional promise**: the refinement is additive-only
+    /// (`WearableCoordinator.refinedCapabilities`), so the ring's own bitmap can never take one back.
+    /// Everything sensor-dependent therefore moved to `bitmapGatedCapabilities` — see there for the R99
+    /// session that is the reason why.
     ///
-    /// `manualHeartRate` / `manualSpo2` / `manualHrv` / `manualBloodPressure` surface the "Measure now"
-    /// buttons in Vitals: a spot reading toggles the live `03 2f` stream on in the metric's own mode,
-    /// collects the first good sample from the `06 01` (HR) / `06 02` (SpO₂) / `06 03` (BP *and* HRV)
-    /// frames, then toggles the same mode off. All four ride the one stream, so any of them can be
-    /// measured on demand — one at a time.
+    /// **`.hrv` / `.manualHrv` stay here, and they are the one sensor that earns it.** The TK5's HRV is
+    /// not an SDK inference: it was *observed on this ring*, values (48 / 79 ms) cross-checked against
+    /// what the vendor app showed for the same session. That is the strongest evidence class we have —
+    /// stronger than any bit — and it is exactly the opposite of the R99, whose HRV was denied four
+    /// independent ways. Gating it could only ever *lose* it: we have never captured the TK5's `02 01`
+    /// reply, so we do not know its length, and `.manualHrv` lives at byte 23 behind the SDK's 24-byte
+    /// block gate. A firmware that answers with a legal shorter array would silently delete a "Measure
+    /// HRV" button that demonstrably works. Deleting a working feature is a worse bug than the one being
+    /// fixed here. (If a TK5 bitmap ever turns up with `ISHASHRV` set, gating becomes a no-op and can be
+    /// done freely; if it turns up *clear*, we have a firmware under-reporting a sensor it provably has —
+    /// which is evidence against trusting that bitmap, not for it.)
+    ///
+    /// Three more entries look gate-able and deliberately are not:
+    ///
+    /// - `.spo2History` — the all-day `05 1A` log. No bit names it: it is one of the SpO₂ sources
+    ///   `ISHASBLOODOXYGEN` already grants, not a separate sensor. A ring without the log answers the
+    ///   query with a no-data header or `0xFC`, which `YCBTHistoryTransfer` skips permanently.
+    /// - `.remSleep` — a stage tag (`3`) *inside* the `05 04` timeline `ISHASSLEEP` grants. Same shape.
+    ///   Gating either would not defer the decision, it would make them permanently unreachable, because
+    ///   no bit can ever satisfy the gate (`PairingMatchingTests`).
+    /// - `.findDevice` — a bit *does* name it (`ISHASFINDDEVICE`, byte 6 bit 4), but nobody has pressed
+    ///   Find Ring on a TK5, so we have neither a working buzz nor a refusal, and gating it would
+    ///   *remove* a button that may well work. Left as a baseline promise on no evidence either way —
+    ///   the same call `ColmiSmartHealthCoordinator` makes, for the same reason.
+    ///
+    /// `manualHeartRate` / `manualSpo2` / `manualHrv` surface the "Measure now" buttons in Vitals: a spot
+    /// reading toggles the live `03 2f` stream on in the metric's own mode, collects the first good
+    /// sample from the `06 01` (HR) / `06 02` (SpO₂) / `06 03` (HRV) frames, then toggles the same mode
+    /// off. (`manualBloodPressure` rides the same stream — it is gated below only because the *sensor*
+    /// is.)
     ///
     /// `measurementInterval` surfaces the Measurement-settings screen: the ring's five `01 xx
     /// {enable, interval}` monitors map 1:1 onto it (HR `01 0C`, BP `01 1C`, temperature `01 20`,
-    /// SpO₂ `01 26`, HRV `01 45`), and the interval is floored at the firmware's 30-minute minimum.
-    ///
-    /// This is the *decodable* set, not a per-unit truth: firmware variants differ, and which history
-    /// types actually return records is what the on-device checkpoint establishes (which is also why
-    /// `supportLevel` stays `.limited` — see `docs/hardware/tk5.md`).
+    /// SpO₂ `01 26`, HRV `01 45`), and the interval is floored at the firmware's 30-minute minimum. It is
+    /// a settings screen, not a sensor: a ring that doesn't implement one of the five NAKs that one write
+    /// (the R99 NAKed two with `0xFC` and honoured three), so it stays baseline.
     let capabilities: Set<WearableCapability> = [
-        .heartRate, .spo2, .spo2History, .steps, .battery, .hrv, .bloodPressure,
-        .temperature, .stress, .fatigue, .bloodSugar,
+        .heartRate, .spo2, .spo2History, .steps, .battery,
+        .hrv, .manualHrv,
         .sleep, .remSleep,
-        .manualHeartRate, .manualSpo2, .manualHrv, .manualBloodPressure,
+        .manualHeartRate, .manualSpo2,
         .realtimeHeartRate, .realtimeSteps,
         .findDevice, .measurementInterval,
     ]
 
-    /// The TK5 keeps its static set: nothing above is bitmap-gated, so its `02 01` reply can neither add
-    /// nor remove a capability. That is deliberate — there is one TK5 SKU and it is the ring we have on
-    /// the bench, so gating it would trade a known-good capability set for a runtime dependency on a
-    /// parser no hardware had yet exercised.
+    /// The per-SKU sensors: offered only if this unit's `02 01` bitmap claims them.
     ///
-    /// The handshake still *requests* the bitmap and `YCBTSupportFunction` still parses it, so every TK5
-    /// session prints the decoded claim to the debug feed. That is the point: it validates the bit table
-    /// against real hardware, at zero behavioural risk, before the Colmi family — whose SKUs genuinely
-    /// differ on which sensors they carry — starts depending on it.
-    let bitmapGatedCapabilities: Set<WearableCapability> = []
+    /// ## Why the TK5 stopped claiming these unconditionally: the R99 session
+    ///
+    /// These four (five, with on-demand BP) used to be baseline here — added in A3 because the *SDK*
+    /// defines their record types (`05 1E` temperature, `05 33` body data, `05 2F` comprehensive), not
+    /// because a TK5 was ever seen producing one. This project's own earlier TK5 notes said the opposite:
+    /// *"skin temperature and stress aren't decoded at all — no capture contains the data."* An
+    /// SDK-defined record type is a statement about the *protocol*, never about the silicon in a
+    /// particular ring.
+    ///
+    /// The sibling family then paid for exactly that reasoning. `ColmiSmartHealthCoordinator` baselined
+    /// `.hrv`/`.manualHrv` on the same grounds; the owner's `R99 54DC` denied HRV four independent ways
+    /// (bitmap bit clear, `01 45` → `0xFC`, `05 33` → `0xFC`, `03 2f` mode `0x0a` → refusal), the owner
+    /// pressed "Measure HRV", and the app spun the full 45 s window before failing. The *same* session
+    /// showed the gate working as designed in both directions: BP was claimed and a spot reading returned
+    /// 100/68, while temperature, stress and blood sugar were not claimed and correctly never appeared.
+    ///
+    /// So the TK5's unconditional claims are no longer trusted either. It is a `.limited`-support ring
+    /// whose sensor complement nobody has confirmed on hardware, and an unfilled card with a dead
+    /// "Measure now" button is worse than an absent one. The bitmap costs a ring that *does* have these
+    /// sensors nothing: it claims them, and it gets them.
+    ///
+    /// ## `.fatigue` is gated on the stress bit
+    ///
+    /// There is no `ISHASFATIGUE` — not in the SDK, not in the app (`HomeFragmentModelUtil.checkedFunction`
+    /// has no fatigue card at all). But fatigue is not ungatable: it is the `body` field of the body-data
+    /// record (`05 33`), whose *whole query* the vendor app gates on `IS_HAS_PRESSURE`
+    /// (`DataSyncUtils`: `if (isSupportFunction(IS_HAS_PRESSURE)) add(Health_History_Body_Data)`) — the
+    /// same bit that gates stress, the `pressure` field of the same record. One record, one bit, two
+    /// fields: a ring with the bit clear is never asked for the record, so it has neither score. That is
+    /// what `YCBTSupportFunction` now derives, and it is why `.fatigue` is here rather than dropped —
+    /// gating it defers the decision to the ring instead of guessing for it.
+    let bitmapGatedCapabilities: Set<WearableCapability> = [
+        .temperature, .bloodPressure, .manualBloodPressure,
+        .stress, .fatigue, .bloodSugar,
+    ]
 
     let iconSystemName = "circle.circle.fill"
 

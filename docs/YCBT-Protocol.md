@@ -26,7 +26,7 @@ only how a ring announces itself and which sensors it happens to carry:
 |---|---|---|
 | **Advertised name** | `TK5 <4 hex>` — unambiguous, so it auto-detects | a Colmi-line name (`R09_ABCD`, `COLMI R10_…`) — **collides with QRing-Colmi**, so the app *asks* (see below) |
 | **Manufacturer data** | prefix `10786501` (captured) | expected to contain the `1078` product code; ⚠️ **no capture yet** |
-| **SupportFunction bitmap** (`02 01`, §2) | parsed and logged, but **not** used to gate: one SKU, on the bench | **gates the per-SKU sensors** — temperature, blood pressure, stress, blood sugar and on-demand BP are claimed only if this unit's bitmap sets their bit |
+| **SupportFunction bitmap** (`02 01`, §2) | **gates the per-SKU sensors** — temperature, BP (incl. on-demand), stress, fatigue, blood sugar. HRV is *not* gated: it was observed working on a TK5 (48 / 79 ms), and hardware evidence outranks a bit | **gates the per-SKU sensors** — temperature, BP (incl. on-demand), stress, blood sugar, **and HRV**, which the owner's R99 denies four ways |
 | **chipScheme** (`02 1b`) | JieLi (3–5), inferred from the `AE00` service | ❓ unknown; only selects the OTA stack, which PulseLoop does not implement (§9) |
 | **Support level** | 🧪 Limited | 🧪 Limited — never connected |
 
@@ -156,7 +156,7 @@ real settings (`YCBTEncoder.startupSequence`).
 |---:|---|---|
 | 1 | `01 00` `[year:u16][mon][day][hh][mm][ss][weekday]` | Set clock. **Weekday is Mon = 0 … Sun = 6.** |
 | 2 | `02 00` `47 43` | GetDeviceInfo → battery + firmware come back in the reply |
-| 3 | `02 01` `47 46` | GetSupportFunction → capability bitmap. The reply is a bit-per-feature map (`ISHASTEMP`, `ISHASBLOOD` = blood *pressure*, `IS_HAS_PRESSURE` = *stress*, …) parsed by `YCBTSupportFunction`. It can only **add** capabilities a family has pre-approved, never remove one — which is how the SmartHealth-Colmi's per-SKU sensors are claimed (§0) while the TK5 keeps its static set |
+| 3 | `02 01` `47 46` | GetSupportFunction → capability bitmap. The reply is a bit-per-feature map (`ISHASTEMP`, `ISHASBLOOD` = blood *pressure*, `IS_HAS_PRESSURE` = *stress* — and, on that same bit, *fatigue*: it gates the whole `05 33` body-data query the two scores share) parsed by `YCBTSupportFunction`. It can only **add** capabilities a family has pre-approved, never remove one — which is how **both** YCBT families claim their per-SKU sensors (§0) |
 | 4 | `02 1b` | GetChipScheme (JieLi vs Nordic vs Realtek — selects the OTA stack; see §8) |
 | 5 | `02 03` `47 50` | GetDeviceName |
 | 6 | `02 07` `43 46` | GetUserConfig |
