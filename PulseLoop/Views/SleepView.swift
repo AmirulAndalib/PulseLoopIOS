@@ -177,6 +177,23 @@ struct SleepView: View {
         .onChange(of: scrolledSleepPage) { _, newValue in
             if let newValue { selectedSleepPage = newValue }
         }
+        // VoiceOver can't reach off-screen carousel pages via horizontal swipe, so expose the
+        // carousel as a single adjustable element: swipe up/down steps sessions and scrolls to them.
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Sleep session")
+        .accessibilityValue(sessionCarouselA11yValue(sessions: sessions))
+        .accessibilityAdjustableAction { direction in
+            let current = min(max(0, selectedSleepPage), sessions.count - 1)
+            let next: Int
+            switch direction {
+            case .increment: next = min(sessions.count - 1, current + 1)
+            case .decrement: next = max(0, current - 1)
+            @unknown default: next = current
+            }
+            guard next != selectedSleepPage else { return }
+            selectedSleepPage = next
+            withAnimation(reduceMotion ? nil : PulseMotion.spring) { scrolledSleepPage = next }
+        }
 
         // Page indicator dots.
         HStack(spacing: 8) {
@@ -190,6 +207,14 @@ struct SleepView: View {
         .frame(maxWidth: .infinity)
         .padding(.top, 4)
         .accessibilityHidden(true)
+    }
+
+    /// VoiceOver value for the adjustable carousel: "2 of 3, 1:20 PM to 2:05 PM".
+    private func sessionCarouselA11yValue(sessions: [SleepSummary]) -> String {
+        guard !sessions.isEmpty else { return "" }
+        let idx = min(max(0, selectedSleepPage), sessions.count - 1)
+        let s = sessions[idx]
+        return "\(idx + 1) of \(sessions.count), \(SleepFormat.clockTime(s.session.startAt)) to \(SleepFormat.clockTime(s.session.endAt))"
     }
 
     // MARK: Day navigation
