@@ -15,6 +15,9 @@ struct SleepView: View {
     @State private var showDayPicker = false
     /// Edge the incoming day's content pushes in from (leading = stepping back, trailing = forward).
     @State private var dayNavEdge: Edge = .trailing
+    /// Observed so the tab re-fetches when a background sync writes new sleep data (matches
+    /// Today/Vitals). Without it, `sleepRange` is a plain call the body never re-runs on sync.
+    @State private var dataChange = PulseDataChange.shared
 
     init() {
         let raw = UserDefaults.standard.string(forKey: "startSleepRange")
@@ -35,6 +38,7 @@ struct SleepView: View {
         // Day view is anchored on a selectable night: shift `now` back `dayOffset` days and let
         // `sleepRange`/`dayReferenceNight` apply the usual 4 AM "last night" flip. Week/Month/Year
         // keep their own anchor (dayOffset is ignored there).
+        let _ = dataChange.token   // subscribe: re-run the body (and re-fetch below) on each synced batch
         let effectiveNow = Calendar.current.date(byAdding: .day, value: -dayOffset, to: Date()) ?? Date()
         let summary = SleepService.sleepRange(range, context: modelContext, now: range == .day ? effectiveNow : Date())
         let goalMin = MetricsRepository.goals(context: modelContext)?.sleepMinutes
