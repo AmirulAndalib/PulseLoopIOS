@@ -27,6 +27,13 @@ final class VitalsStore {
     /// Fully-prepared card view-models keyed by `MetricKind`, computed off the `body` path. Views read
     /// these directly instead of re-interpreting raw samples on every render.
     private(set) var cards: [MetricKind: VitalCardViewModel] = [:]
+    /// The HRV personal baseline, derived once per rebuild. The chart card used to compute this in
+    /// `body`, which meant a full pass over the samples on every re-render (including every frame of
+    /// a card drag).
+    private(set) var hrvBaseline: BaselineStats?
+    /// Bumped whenever `cards` are rebuilt. The reorder grid keys cell equality on this so dragging a
+    /// card doesn't re-render every Swift Charts card — see `ReorderCell`.
+    private(set) var revision: Int = 0
 
     private let modelContext: ModelContext
     /// Snapshot of the physiology profile used for thresholds; refreshed each rebuild.
@@ -50,7 +57,14 @@ final class VitalsStore {
         self.visibleMetrics = Self.computeVisible(context: modelContext)
         self.cards = [:]
         self.signature = Self.currentSignature(context: modelContext, profile: profile)
-        self.cards = buildCards()
+        applyRebuiltCards()
+    }
+
+    /// The sole mutator of `cards`, so "revision changed" is exactly "a card's data changed".
+    private func applyRebuiltCards() {
+        cards = buildCards()
+        hrvBaseline = BaselineStats.compute(hrvSamples)
+        revision &+= 1
     }
 
     /// Update the physiology profile snapshot used for thresholds. The view passes the latest
@@ -83,7 +97,7 @@ final class VitalsStore {
         fatigueSamples = MetricsService.metricRange(metric: .fatigue, range: .twentyFourHours, context: modelContext)
         capabilities = MetricsService.deviceCapabilities(modelContext)
         visibleMetrics = Self.computeVisible(context: modelContext)
-        cards = buildCards()
+        applyRebuiltCards()
         signature = sig
     }
 
@@ -128,11 +142,17 @@ final class VitalsStore {
         let cal = CalibrationStore.shared.settings
         let calSig = "\(cal.bpSystolicOffset)/\(cal.bpDiastolicOffset)/\(cal.glucoseOffsetMgdl)/\(cal.hasBPReference)/\(cal.isGlucoseCalibrated)"
         let profileSig = profile.map { "\(Int($0.updatedAt.timeIntervalSince1970))" } ?? "·"
+        // Include the Vitals-scope visibility + chart-detail prefs so a Settings toggle changes the
+        // signature and the next refresh rebuilds — otherwise it wouldn't take effect on the tab until
+        // an unrelated sync bumped the signature.
+        let p = MetricPrefsStore.shared.settings
+        let prefSig = "\(p.hiddenMetrics.sorted().joined(separator: ","))/\(p.resolution.rawValue)"
+
         return [
             latest(.heartRate), latest(.spo2), latest(.stress), latest(.hrv), latest(.temperature),
             latest(.bloodPressureSystolic), latest(.bloodPressureDiastolic), latest(.bloodSugar), latest(.fatigue),
             device.map { "\($0.batteryPercent)/\($0.state.rawValue)" } ?? "·",
-            calSig, profileSig,
+            calSig, profileSig, prefSig,
         ].joined(separator: "|")
     }
 }
