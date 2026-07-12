@@ -244,6 +244,10 @@ enum SleepInsights {
 
     /// Population standard deviation of nightly durations (minutes).
     private static func durationConsistency(_ valid: [SleepSummary]) -> Double? {
+        // Collapse naps into their day first so the variance is computed over the same
+        // per-day population that `averageDuration` produces the mean from (a nap counted
+        // as its own point against the collapsed mean spuriously inflated the SD).
+        let valid = collapseByDay(valid)
         guard valid.count >= 2, let avg = averageDuration(valid) else { return nil }
         let variance = valid.reduce(0.0) { $0 + pow(Double($1.session.totalMinutes - avg), 2) } / Double(valid.count)
         return sqrt(variance)
@@ -309,7 +313,9 @@ enum SleepInsights {
     )
 
     static func aggregateCoach(range: SleepRangeKey, sessions: [SleepSummary], expectedNights: Int, goalMin: Int?) -> SleepCoach {
-        let valid = validSessions(sessions)
+        // Collapse naps into their day so "N nights tracked" counts distinct nights, matching the
+        // collapsed average this copy sits next to (a night + 2 naps is 1 night, not 3).
+        let valid = collapseByDay(validSessions(sessions))
         let avgMin = averageDuration(valid)
         let periodWord = range == .week ? "week" : range == .month ? "month" : "year"
 

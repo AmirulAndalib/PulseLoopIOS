@@ -169,7 +169,9 @@ struct SleepView: View {
 
     @ViewBuilder
     private func aggregateView(summary: SleepRangeSummary, goalMin: Int?) -> some View {
-        let valid = SleepInsights.validSessions(summary.sessions)
+        // Collapse naps into their day so the hero's "N of M nights tracked" counts distinct nights,
+        // consistent with the (already-collapsing) averages and coach copy.
+        let valid = SleepInsights.collapseByDay(SleepInsights.validSessions(summary.sessions))
         let enough = valid.count >= 2
         let avgMin = SleepInsights.averageDuration(valid)
         let avgScore = SleepInsights.averageScore(valid)

@@ -739,66 +739,107 @@ enum SleepService {
     }
 
     /// Re-derive one waking day's sessions from its raw stage blocks: split by
-    /// `SleepSegmentation`, then reconcile the SwiftData rows — reuse existing rows in
-    /// time order, insert any missing, delete extras — re-point every block to its
-    /// segment and recompute session bounds. Idempotent: re-running on the same blocks
-    /// yields the same rows. Called after each timeline packet and from the one-time
-    /// migration. Does not save; the caller owns the transaction boundary.
+    /// `SleepSegmentation`, then reconcile the SwiftData rows — match each segment to the
+    /// existing row whose prior time-range overlaps it (so identity is stable even when a
+    /// nap syncs before the night it precedes), insert rows for unmatched segments, delete
+    /// leftover empty rows, re-point every block to its segment, and recompute bounds. A
+    /// change signal (`DerivedUpdateRow` + `syncedAt` bump) is emitted only when a row's
+    /// bounds or block set actually changed, so re-syncing an unchanged day is a true no-op.
+    /// Idempotent. Does not save; the caller owns the transaction boundary.
     static func reconcileWakingDay(dateKey: Date, context: ModelContext) {
         let calendar = Calendar.current
         let day = calendar.startOfDay(for: dateKey)
+        let now = Date()
 
         let allSessions = (try? context.fetch(FetchDescriptor<SleepSession>())) ?? []
-        let daySessions = allSessions
-            .filter { calendar.isDate($0.date, inSameDayAs: day) }
-            .sorted { $0.startAt < $1.startAt }
+        let daySessions = allSessions.filter { calendar.isDate($0.date, inSameDayAs: day) }
         guard !daySessions.isEmpty else { return }
 
         let daySessionIds = Set(daySessions.map { $0.id })
         let dayBlocks = ((try? context.fetch(FetchDescriptor<SleepStageBlock>())) ?? [])
             .filter { daySessionIds.contains($0.sessionId) }
 
-        let segments = SleepSegmentation.segment(dayBlocks)
+        let rawSegments = SleepSegmentation.segment(dayBlocks)
 
         // No blocks left on this day — drop the empty rows entirely.
-        guard !segments.isEmpty else {
+        guard !rawSegments.isEmpty else {
             for row in daySessions { context.delete(row) }
             return
         }
 
-        for (index, segment) in segments.enumerated() {
-            let sorted = segment.sorted { $0.startAt < $1.startAt }
-            guard let segStart = sorted.first?.startAt else { continue }
-            let segEnd = sorted
-                .map { $0.startAt.addingTimeInterval(Double($0.durationMinutes) * 60) }
-                .max() ?? segStart
+        // Snapshot each row's PRIOR bounds + owned block ids before any mutation, for both
+        // identity matching (#9) and change detection (#8).
+        let priorBlocksByRow = Dictionary(grouping: dayBlocks, by: { $0.sessionId })
+        struct Prior { let start: Date; let end: Date; let blockIDs: Set<UUID> }
+        var prior: [UUID: Prior] = [:]
+        for row in daySessions {
+            prior[row.id] = Prior(start: row.startAt, end: row.endAt,
+                                  blockIDs: Set((priorBlocksByRow[row.id] ?? []).map { $0.id }))
+        }
 
-            let row: SleepSession
-            if index < daySessions.count {
-                row = daySessions[index]
+        struct Segment { let blocks: [SleepStageBlock]; let start: Date; let end: Date }
+        let segments: [Segment] = rawSegments.compactMap { seg in
+            let sorted = seg.sorted { $0.startAt < $1.startAt }
+            guard let start = sorted.first?.startAt else { return nil }
+            let end = sorted.map { $0.startAt.addingTimeInterval(Double($0.durationMinutes) * 60) }.max() ?? start
+            return Segment(blocks: sorted, start: start, end: end)
+        }
+
+        func overlap(_ a0: Date, _ a1: Date, _ b0: Date, _ b1: Date) -> TimeInterval {
+            max(0, min(a1, b1).timeIntervalSince(max(a0, b0)))
+        }
+
+        // Greedily match each segment to the best-overlapping unused row; a row also matches when it
+        // contains the segment's start (covers a freshly-created zero-length container row).
+        var available = daySessions
+        var matched: [(segment: Segment, row: SleepSession?)] = []
+        for segment in segments {
+            let best = available.enumerated().max { l, r in
+                overlap(segment.start, segment.end, prior[l.element.id]!.start, prior[l.element.id]!.end)
+                    < overlap(segment.start, segment.end, prior[r.element.id]!.start, prior[r.element.id]!.end)
+            }
+            if let best, let p = prior[best.element.id],
+               overlap(segment.start, segment.end, p.start, p.end) > 0 || (segment.start...segment.end).contains(p.start) {
+                available.remove(at: best.offset)
+                matched.append((segment, best.element))
             } else {
-                row = SleepSession(date: day, startAt: segStart, endAt: segEnd, totalMinutes: 0, syncedAt: Date())
-                context.insert(row)
+                matched.append((segment, nil))
+            }
+        }
+
+        for (segment, existing) in matched {
+            let row: SleepSession
+            let isNew: Bool
+            if let existing {
+                row = existing; isNew = false
+            } else {
+                row = SleepSession(date: day, startAt: segment.start, endAt: segment.end, totalMinutes: 0, syncedAt: now)
+                context.insert(row); isNew = true
             }
 
-            for block in sorted {
+            for block in segment.blocks {
                 block.sessionId = row.id
-                block.startMinute = max(0, Int(block.startAt.timeIntervalSince(segStart) / 60))
+                block.startMinute = max(0, Int(block.startAt.timeIntervalSince(segment.start) / 60))
             }
+            let newTotal = max(0, Int(segment.end.timeIntervalSince(segment.start) / 60))
+            let newBlockIDs = Set(segment.blocks.map { $0.id })
+            let p = prior[row.id]
+            let changed = isNew || p == nil
+                || p!.start != segment.start || p!.end != segment.end || p!.blockIDs != newBlockIDs
+
             row.date = day
-            row.startAt = segStart
-            row.endAt = segEnd
-            row.totalMinutes = max(0, Int(segEnd.timeIntervalSince(segStart) / 60))
-            row.syncedAt = Date()
-            row.updatedAt = Date()
-            context.insert(DerivedUpdateRow(kind: "sleep_timeline", entityType: "sleep_session", entityId: row.id.uuidString))
+            row.startAt = segment.start
+            row.endAt = segment.end
+            row.totalMinutes = newTotal
+            if changed {
+                row.syncedAt = now
+                row.updatedAt = now
+                context.insert(DerivedUpdateRow(kind: "sleep_timeline", entityType: "sleep_session", entityId: row.id.uuidString))
+            }
         }
 
-        // Every block was re-pointed to a segment row above, so any rows beyond the
-        // segment count are now empty — remove them.
-        if daySessions.count > segments.count {
-            for row in daySessions[segments.count...] { context.delete(row) }
-        }
+        // Rows not matched to any segment had all their blocks re-pointed away — delete them.
+        for row in available { context.delete(row) }
     }
 
     /// One-time re-segmentation of existing sleep sessions that were persisted before
