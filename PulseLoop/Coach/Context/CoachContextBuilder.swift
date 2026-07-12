@@ -56,12 +56,12 @@ enum CoachContextBuilder {
 
         let week = CoachContextPacket.WeekContext(
             daysAvailable: daysAvailable,
-            // Average over days that actually have data, not the fixed 7 week-slots — `steps7d`
-            // zero-fills missing days, so dividing by `weekSteps.count` (always 7) understates the
-            // average (e.g. 8,000 steps on Monday → 1,142 instead of 8,000). Keeps avgSteps
-            // consistent with `daysAvailable` / `totalSteps`.
+            // `steps7d` is a fixed 7-slot week scaffold with missing days zero-filled, so it is never
+            // empty and `weekSteps.count` is always 7. Average over the days that actually have data
+            // (matching `ActivityTrendsView.dailyAverage` and the `get_activity_history` tool) and key
+            // the no-data case off `daysAvailable`, so avgSteps and totalSteps agree on "no data".
             avgSteps: daysAvailable == 0 ? nil : weekSteps.reduce(0, +) / daysAvailable,
-            totalSteps: weekSteps.isEmpty ? nil : weekSteps.reduce(0, +),
+            totalSteps: daysAvailable == 0 ? nil : weekSteps.reduce(0, +),
             activeMinutesTotal: nil,
             exerciseDays: daysAvailable,
             mostActiveDay: mostActive.flatMap { $0.value > 0 ? "\(localDate($0.date)) (\(Int($0.value)) steps)" : nil }
