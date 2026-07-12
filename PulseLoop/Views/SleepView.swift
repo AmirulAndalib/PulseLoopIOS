@@ -10,6 +10,11 @@ struct SleepView: View {
     @State private var coachStore = CoachSettingsStore.shared
     @State private var selectedSleepPage = 0
     @State private var scrolledSleepPage: Int?
+    /// 0 = today's reference night; N = N days earlier. Drives the Day-view date stepper.
+    @State private var dayOffset = 0
+    @State private var showDayPicker = false
+    /// Edge the incoming day's content pushes in from (leading = stepping back, trailing = forward).
+    @State private var dayNavEdge: Edge = .trailing
 
     init() {
         let raw = UserDefaults.standard.string(forKey: "startSleepRange")
@@ -27,7 +32,11 @@ struct SleepView: View {
     }
 
     var body: some View {
-        let summary = SleepService.sleepRange(range, context: modelContext)
+        // Day view is anchored on a selectable night: shift `now` back `dayOffset` days and let
+        // `sleepRange`/`dayReferenceNight` apply the usual 4 AM "last night" flip. Week/Month/Year
+        // keep their own anchor (dayOffset is ignored there).
+        let effectiveNow = Calendar.current.date(byAdding: .day, value: -dayOffset, to: Date()) ?? Date()
+        let summary = SleepService.sleepRange(range, context: modelContext, now: range == .day ? effectiveNow : Date())
         let goalMin = MetricsRepository.goals(context: modelContext)?.sleepMinutes
         let activitySteps = MetricsRepository.latestActivity(context: modelContext)?.steps
 
@@ -36,7 +45,10 @@ struct SleepView: View {
                 SleepRangeSelectorView(selection: $range)
 
                 if range == .day {
-                    dayView(summary: summary, activitySteps: activitySteps)
+                    dayNavHeader(shownDay: SleepService.dayReferenceNight(now: effectiveNow))
+                    dayView(summary: summary, activitySteps: activitySteps, isToday: dayOffset == 0)
+                        .id(dayOffset)
+                        .transition(reduceMotion ? .opacity : .push(from: dayNavEdge))
                 } else {
                     aggregateView(summary: summary, goalMin: goalMin)
                 }
@@ -47,10 +59,22 @@ struct SleepView: View {
         .background(PulseColors.background)
         .refreshable { await coordinator.pullToRefresh() }
         .pulseScrollEdges()
-        .task(id: range) {
+        .onChange(of: range) { _, newRange in
+            // Returning to Day from an aggregate range always lands on today, not a stale offset.
+            if newRange == .day { resetToToday() }
+        }
+        .sensoryFeedback(.selection, trigger: dayOffset)
+        .onChange(of: dayOffset) { _, newOffset in announceDay(newOffset) }
+        .sheet(isPresented: $showDayPicker) { dayPickerSheet }
+        .task(id: "\(range.rawValue)-\(dayOffset)") {
             guard coachEnabled else { return }
-            if range == .day { await summaryService.refreshSleepDayIfNeeded() }
-            else { await summaryService.refreshSleepRangeIfNeeded(range) }
+            if range == .day {
+                // Only the live "last night" gets an LLM summary refresh; browsing history never
+                // regenerates/clobbers today's summary.
+                if dayOffset == 0 { await summaryService.refreshSleepDayIfNeeded() }
+            } else {
+                await summaryService.refreshSleepRangeIfNeeded(range)
+            }
         }
     }
 
@@ -74,7 +98,7 @@ struct SleepView: View {
     // MARK: Day
 
     @ViewBuilder
-    private func dayView(summary: SleepRangeSummary, activitySteps: Int?) -> some View {
+    private func dayView(summary: SleepRangeSummary, activitySteps: Int?, isToday: Bool) -> some View {
         let sessions = SleepInsights.validSessions(summary.sessions).sorted { $0.session.startAt < $1.session.startAt }
         if sessions.isEmpty {
             let noData = SleepInsights.noDataState(.day)
@@ -99,7 +123,9 @@ struct SleepView: View {
             } else {
                 sleepCarousel(sessions: sessions)
             }
-            summaryCard(daySummary, fallback: dayFallback)
+            // The LLM day summary describes last night only; on a past day fall back to the
+            // scripted coach (deterministically computed from that day's own primary session).
+            summaryCard(isToday ? daySummary : nil, fallback: dayFallback)
         }
     }
 
@@ -163,6 +189,183 @@ struct SleepView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 4)
+        .accessibilityHidden(true)
+    }
+
+    // MARK: Day navigation
+
+    /// The date stepper above the Day content: ‹ older · date · newer ›. Horizontal swipe is owned
+    /// by the session carousel, so days move only via these taps / the date picker.
+    @ViewBuilder
+    private func dayNavHeader(shownDay: Date) -> some View {
+        let labels = dayLabels(shownDay)
+        HStack(spacing: 8) {
+            chevronButton("chevron.left", enabled: dayOffset < maxDayOffset, label: "Previous day",
+                          disabledHint: "Earliest recorded sleep") { stepDay(older: true) }
+            Spacer(minLength: 4)
+            Button { showDayPicker = true } label: {
+                VStack(spacing: 1) {
+                    HStack(spacing: 4) {
+                        Text(labels.primary)
+                            .font(PulseFont.headline)
+                            .foregroundStyle(PulseColors.textPrimary)
+                            .contentTransition(.opacity)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(PulseColors.textMuted)
+                    }
+                    // Always render the subtitle line (a space when empty) so the hero card never
+                    // shifts vertically as you cross the Today/Yesterday/weekday label boundaries.
+                    Text(labels.secondary.isEmpty ? " " : labels.secondary)
+                        .font(PulseFont.caption)
+                        .foregroundStyle(PulseColors.textSecondary)
+                        .textCase(.uppercase)
+                        .kerning(0.5)
+                        .contentTransition(.opacity)
+                }
+                .frame(minHeight: 44)
+                .fixedSize(horizontal: false, vertical: true)
+                .contentShape(Rectangle())
+                .animation(reduceMotion ? nil : PulseMotion.spring, value: dayOffset)
+            }
+            .buttonStyle(.plain)
+            .accessibilityElement(children: .ignore)
+            .accessibilityAddTraits([.isButton, .isHeader])
+            .accessibilityLabel(voiceLabel(shownDay))
+            .accessibilityHint("Opens a date picker to choose a day")
+            Spacer(minLength: 4)
+            chevronButton("chevron.right", enabled: dayOffset > 0, label: "Next day",
+                          disabledHint: "You're viewing the most recent day") { stepDay(older: false) }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    /// A ≥44pt tappable chevron; glass disc only while enabled, muted glyph when at a bound.
+    @ViewBuilder
+    private func chevronButton(_ system: String, enabled: Bool, label: String,
+                               disabledHint: String? = nil, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: system)
+                .font(PulseFont.headline.weight(.semibold))
+                .foregroundStyle(enabled ? PulseColors.textPrimary : PulseColors.textMuted)
+                .frame(width: 44, height: 44)
+                .background {
+                    if enabled {
+                        Circle().fill(Color.clear).frame(width: 36, height: 36).pulseGlass(Circle(), interactive: true)
+                    }
+                }
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.pulseTap)
+        .disabled(!enabled)
+        .accessibilityLabel(label)
+        .accessibilityHint(enabled ? "" : (disabledHint ?? ""))
+    }
+
+    /// Graphical date picker bounded to [oldest browsable day ... today].
+    private var dayPickerSheet: some View {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let selection = Binding<Date>(
+            get: { calendar.date(byAdding: .day, value: -dayOffset, to: today) ?? today },
+            set: { setDay(to: $0) }
+        )
+        return NavigationStack {
+            DatePicker("Day", selection: selection, in: floorDay...today, displayedComponents: .date)
+                .datePickerStyle(.graphical)
+                .padding()
+                .navigationTitle("Choose a day")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { showDayPicker = false }
+                    }
+                }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    /// Earliest recorded night (sessions are sorted ascending by date), start-of-day.
+    private var earliestDataDay: Date? {
+        SleepRepository.sessions(context: modelContext).first.map { Calendar.current.startOfDay(for: $0.date) }
+    }
+    /// How many days back the stepper may travel: up to one week before the earliest recorded
+    /// night, clamped to a 1-year floor. 0 (locked to today) when there's no data at all.
+    private var maxDayOffset: Int {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        guard let earliest = earliestDataDay else { return 0 }
+        let earliestMinus7 = calendar.date(byAdding: .day, value: -7, to: earliest) ?? earliest
+        let yearAgo = calendar.date(byAdding: .day, value: -365, to: today) ?? today
+        let floor = max(earliestMinus7, yearAgo)   // the more-recent of the two bounds
+        return max(0, calendar.dateComponents([.day], from: floor, to: today).day ?? 0)
+    }
+    private var floorDay: Date {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        return calendar.date(byAdding: .day, value: -maxDayOffset, to: today) ?? today
+    }
+
+    private func resetToToday() {
+        dayOffset = 0
+        selectedSleepPage = 0
+        scrolledSleepPage = nil
+    }
+    private func stepDay(older: Bool) {
+        let target = older ? dayOffset + 1 : dayOffset - 1
+        let clamped = min(maxDayOffset, max(0, target))
+        guard clamped != dayOffset else { return }
+        dayNavEdge = older ? .leading : .trailing
+        withAnimation(reduceMotion ? nil : PulseMotion.spring) { dayOffset = clamped }
+        selectedSleepPage = 0
+        scrolledSleepPage = nil
+    }
+    private func setDay(to date: Date) {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let offset = calendar.dateComponents([.day], from: calendar.startOfDay(for: date), to: today).day ?? 0
+        let clamped = min(maxDayOffset, max(0, offset))
+        dayNavEdge = clamped > dayOffset ? .leading : .trailing   // further back = enters from leading
+        withAnimation(reduceMotion ? nil : PulseMotion.spring) { dayOffset = clamped }
+        selectedSleepPage = 0
+        scrolledSleepPage = nil
+        showDayPicker = false
+    }
+
+    /// Primary (relative) + secondary (absolute) date strings for the header label.
+    private func dayLabels(_ shownDay: Date) -> (primary: String, secondary: String) {
+        let calendar = Calendar.current
+        let absolute = shownDay.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())
+        if calendar.isDateInToday(shownDay) { return ("Today", absolute) }
+        if calendar.isDateInYesterday(shownDay) { return ("Yesterday", absolute) }
+        let daysAgo = calendar.dateComponents([.day], from: shownDay, to: calendar.startOfDay(for: Date())).day ?? 0
+        if daysAgo < 7 {
+            return (shownDay.formatted(.dateTime.weekday(.wide)), shownDay.formatted(.dateTime.month(.abbreviated).day()))
+        }
+        let sameYear = calendar.component(.year, from: shownDay) == calendar.component(.year, from: Date())
+        let primary = sameYear ? absolute : shownDay.formatted(.dateTime.month(.abbreviated).day().year())
+        return (primary, "")
+    }
+    /// Full spoken date for VoiceOver (never abbreviated glyphs).
+    private func voiceLabel(_ shownDay: Date) -> String {
+        let calendar = Calendar.current
+        let full = shownDay.formatted(.dateTime.weekday(.wide).month(.wide).day())
+        if calendar.isDateInToday(shownDay) { return "Today, \(full)" }
+        if calendar.isDateInYesterday(shownDay) { return "Yesterday, \(full)" }
+        let sameYear = calendar.component(.year, from: shownDay) == calendar.component(.year, from: Date())
+        return sameYear ? full : shownDay.formatted(.dateTime.weekday(.wide).month(.wide).day().year())
+    }
+
+    /// Speak the newly-selected day + its session count — the carousel repopulates silently and
+    /// focus stays on the chevron, so VoiceOver users otherwise get no confirmation of the change.
+    private func announceDay(_ offset: Int) {
+        let now = Calendar.current.date(byAdding: .day, value: -offset, to: Date()) ?? Date()
+        let sessionCount = SleepInsights.validSessions(SleepService.sleepRange(.day, context: modelContext, now: now).sessions).count
+        let day = SleepService.dayReferenceNight(now: now)
+        let sessionsPhrase = sessionCount == 0
+            ? "No sleep recorded"
+            : "\(sessionCount) sleep session\(sessionCount == 1 ? "" : "s")"
+        AccessibilityNotification.Announcement("\(voiceLabel(day)). \(sessionsPhrase).").post()
     }
 
     // MARK: Aggregate
