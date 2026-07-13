@@ -427,6 +427,9 @@ struct RecordSelectView: View {
                                 RoundedRectangle(cornerRadius: 24, style: .continuous)
                                     .strokeBorder(isSelected ? PulseColors.accent.opacity(0.9) : Color.clear, lineWidth: 1)
                             )
+                            // Whole card taps — glass doesn't hit-test like the old solid fill, so
+                            // without this only the icon/text (not the empty card area) registered.
+                            .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
                         }
                         .buttonStyle(.plain)
                     }

@@ -169,6 +169,8 @@ private struct ActivityTypeButton: View, Equatable {
             // Selected = accent-tinted glass; others = plain glass.
             .pulseGlass(RoundedRectangle(cornerRadius: 18, style: .continuous),
                         interactive: true, tint: isSelected ? PulseColors.accent : nil)
+            // Whole pill taps (glass doesn't hit-test the empty area like a solid fill would).
+            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
         .buttonStyle(.plain)
     }
