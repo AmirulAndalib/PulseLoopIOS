@@ -20,6 +20,12 @@ final class LuckRingDriverTests: XCTestCase {
         packetizer.packets(for: frame)
     }
 
+    /// Concatenate byte chunks without `+` chains — CI's older Swift compiler times out
+    /// type-checking heterogeneous `[UInt8] + [literal]` expressions.
+    private func cat(_ parts: [UInt8]...) -> [UInt8] {
+        parts.flatMap { $0 }
+    }
+
     // MARK: Auto-ACK
 
     func testDeviceSendIsAckedAndDecoded() {
@@ -56,7 +62,8 @@ final class LuckRingDriverTests: XCTestCase {
         let driver = LuckRingDriver(writer: writer)
 
         let frame = LuckRingFrame(cmdType: .sendNoAck, dataType: LuckRingDataType.realHeart,
-                                  payload: LuckRingBytes.le16(1) + [1] + LuckRingBytes.le32(1_700_000_000) + [70], seq: 0, devType: 1)
+                                  payload: cat(LuckRingBytes.le16(1), [1], LuckRingBytes.le32(1_700_000_000), [70]),
+                                  seq: 0, devType: 1)
         _ = driver.ingest(packets(frame)[0], from: notify)
 
         XCTAssertTrue(writer.sent.isEmpty, "a SEND_NO_ACK expects no reply")
@@ -69,9 +76,9 @@ final class LuckRingDriverTests: XCTestCase {
         let driver = LuckRingDriver(writer: writer)
 
         // A 2-record HR history frame that spans a head + one continuation.
-        let payload = LuckRingBytes.le16(2) + [2]
-            + LuckRingBytes.le32(1_700_000_000) + [72]
-            + LuckRingBytes.le32(1_700_000_060) + [75]
+        let payload = cat(LuckRingBytes.le16(2), [2],
+                          LuckRingBytes.le32(1_700_000_000), [72],
+                          LuckRingBytes.le32(1_700_000_060), [75])
         let frame = LuckRingFrame(cmdType: .send, dataType: LuckRingDataType.historyHeart, payload: payload, seq: 1, devType: 1)
         let wire = packets(frame)
         XCTAssertGreaterThan(wire.count, 1)
@@ -91,9 +98,9 @@ final class LuckRingDriverTests: XCTestCase {
         let writer = FakeWriter()
         let driver = LuckRingDriver(writer: writer)
 
-        let payload = LuckRingBytes.le16(2) + [2]
-            + LuckRingBytes.le32(1_700_000_000) + [72]
-            + LuckRingBytes.le32(1_700_000_060) + [75]
+        let payload = cat(LuckRingBytes.le16(2), [2],
+                          LuckRingBytes.le32(1_700_000_000), [72],
+                          LuckRingBytes.le32(1_700_000_060), [75])
         let wire = packets(LuckRingFrame(cmdType: .send, dataType: LuckRingDataType.historyHeart, payload: payload, seq: 1, devType: 1))
 
         _ = driver.ingest(wire[0], from: notify)   // head only

@@ -11,9 +11,16 @@ final class LuckRingDecoderTests: XCTestCase {
     private let base: UInt32 = 1_700_000_000
     private var baseDate: Date { Date(timeIntervalSince1970: TimeInterval(base)) }
 
+    /// Concatenate byte chunks without `+` chains — CI's older Swift compiler times out
+    /// type-checking heterogeneous `[UInt8] + [literal]` expressions ("unable to type-check
+    /// this expression in reasonable time").
+    private func cat(_ parts: [UInt8]...) -> [UInt8] {
+        parts.flatMap { $0 }
+    }
+
     // Envelope: [total u16 LE][items u8] + records.
     private func envelope(items: Int, records: [[UInt8]]) -> [UInt8] {
-        LuckRingBytes.le16(items) + [UInt8(items)] + records.flatMap { $0 }
+        cat(LuckRingBytes.le16(items), [UInt8(items)], records.flatMap { $0 })
     }
 
     private func frame(_ dataType: UInt8, _ payload: [UInt8], cmd: LuckRingCmdType = .send) -> LuckRingFrame {
@@ -52,8 +59,8 @@ final class LuckRingDecoderTests: XCTestCase {
 
     func testHeartRateHistoryFansOutPerRecord() {
         let payload = envelope(items: 2, records: [
-            LuckRingBytes.le32(base) + [72],
-            LuckRingBytes.le32(base + 60) + [75],
+            cat(LuckRingBytes.le32(base), [72]),
+            cat(LuckRingBytes.le32(base + 60), [75]),
         ])
         let events = decoder.decode(frame(8, payload))
         let readings: [(Double, Date)] = events.compactMap {
@@ -65,7 +72,7 @@ final class LuckRingDecoderTests: XCTestCase {
     }
 
     func testSpo2HistoryDecodes() {
-        let payload = envelope(items: 1, records: [LuckRingBytes.le32(base) + [97]])
+        let payload = envelope(items: 1, records: [cat(LuckRingBytes.le32(base), [97])])
         guard case let .historyMeasurement(kind, value, _) = decoder.decode(frame(40, payload)).first else {
             return XCTFail("expected spo2 history")
         }
@@ -74,7 +81,7 @@ final class LuckRingDecoderTests: XCTestCase {
     }
 
     func testBloodPressureHistoryFansOutSystolicAndDiastolic() {
-        let payload = envelope(items: 1, records: [LuckRingBytes.le32(base) + [120, 80]])
+        let payload = envelope(items: 1, records: [cat(LuckRingBytes.le32(base), [120, 80])])
         let events = decoder.decode(frame(41, payload))
         let kinds = events.compactMap { evt -> (MeasurementKind, Double)? in
             if case let .historyMeasurement(kind, value, _) = evt { return (kind, value) }
@@ -86,7 +93,7 @@ final class LuckRingDecoderTests: XCTestCase {
     }
 
     func testHrvHistoryDecodes() {
-        let payload = envelope(items: 1, records: [LuckRingBytes.le32(base) + [45]])
+        let payload = envelope(items: 1, records: [cat(LuckRingBytes.le32(base), [45])])
         guard case let .historyMeasurement(kind, value, _) = decoder.decode(frame(42, payload)).first else {
             return XCTFail("expected hrv history")
         }
@@ -96,7 +103,7 @@ final class LuckRingDecoderTests: XCTestCase {
 
     func testTemperatureScalesByTenFromTheWideRecord() {
         // 8-byte record (`parseFloat`): [time u32][value u16 LE]/10 (+2 pad). 365 → 36.5 °C.
-        let payload = envelope(items: 1, records: [LuckRingBytes.le32(base) + LuckRingBytes.le16(365) + [0, 0]])
+        let payload = envelope(items: 1, records: [cat(LuckRingBytes.le32(base), LuckRingBytes.le16(365), [0, 0])])
         guard case let .historyMeasurement(kind, value, _) = decoder.decode(frame(47, payload)).first else {
             return XCTFail("expected temperature history")
         }
@@ -107,7 +114,7 @@ final class LuckRingDecoderTests: XCTestCase {
     // MARK: Live streams
 
     func testLiveHeartRateSamplesAndEndedMarker() {
-        let stream = envelope(items: 1, records: [LuckRingBytes.le32(base) + [66]])
+        let stream = envelope(items: 1, records: [cat(LuckRingBytes.le32(base), [66])])
         guard case let .heartRateSample(bpm, _) = decoder.decode(frame(7, stream)).first else {
             return XCTFail("expected live HR sample")
         }
@@ -121,7 +128,7 @@ final class LuckRingDecoderTests: XCTestCase {
     }
 
     func testLiveBloodPressureDecodes() {
-        let payload = envelope(items: 1, records: [LuckRingBytes.le32(base) + [118, 76]])
+        let payload = envelope(items: 1, records: [cat(LuckRingBytes.le32(base), [118, 76])])
         guard case let .bloodPressureSample(sys, dia, _) = decoder.decode(frame(18, payload)).first else {
             return XCTFail("expected live BP")
         }
@@ -133,8 +140,8 @@ final class LuckRingDecoderTests: XCTestCase {
 
     func testSportRecordDecodesU24Fields() {
         // [start u32][steps u32][distance u24+pad][calories u24+pad][duration u24+pad].
-        let record = LuckRingBytes.le32(base) + LuckRingBytes.le32(1234)
-            + le24(5000) + [0] + le24(300) + [0] + le24(600) + [0]
+        let record = cat(LuckRingBytes.le32(base), LuckRingBytes.le32(1234),
+                         le24(5000), [0], le24(300), [0], le24(600), [0])
         let events = decoder.decode(frame(5, envelope(items: 1, records: [record])))
         guard case let .activityBucket(ts, steps, distance) = events.first else {
             return XCTFail("expected activityBucket, got \(events)")
@@ -183,7 +190,7 @@ final class LuckRingDecoderTests: XCTestCase {
 
     // Build a sleep payload: [total u16][pageCount], then each page = [validCount] + 15 × [type, time u32].
     private func sleepPayload(pages: [(valid: Int, entries: [(UInt8, UInt32)])]) -> [UInt8] {
-        var out = LuckRingBytes.le16(0) + [UInt8(pages.count)]
+        var out = cat(LuckRingBytes.le16(0), [UInt8(pages.count)])
         for page in pages {
             out.append(UInt8(page.valid))
             for slot in 0..<15 {
