@@ -60,9 +60,9 @@ section breaks the hardware down by manufacturer.
 
     ---
 
-    🧪 Limited. The `0xFF64` "K6" family (LuckRing app), rebuilt from the vendor
-    SDK. Fixed 20-byte cleartext packets, no CRC. TK18 is the tested unit; other
-    siblings (some sold under simsonlab) pair too.
+    🧪 Limited. The ~$10 Shenzhen Coolwear (Kewo) ring family — `0xFF64` "K6"
+    protocol, LuckRing app — rebuilt from the vendor SDK. TK18 is the tested
+    unit; white-labeled siblings (SIMSONLAB, Yoidesu, …) pair too.
 
     [:octicons-arrow-right-24: LuckRing / TK18](luckring.md)
 
@@ -162,7 +162,7 @@ own column — same hardware, different protocol, different driver.
 ³ Profile-derived estimate from sex/age/height/weight, not a real glucometer reading.
 ⁴ Decoded from the vendor SDK, but the *value scale* is inferred rather than observed — one confirmed reading on hardware settles it. See [TK5: needs on-device confirmation](tk5.md#needs-on-device-confirmation).
 ⁵ PulseLoop implements no OTA for either YCBT ring. On the TK5 that path is JieLi RCSP auth on `AE00` (out of scope); on a SmartHealth-Colmi the chip scheme — and therefore which DFU stack it would even need — is unknown.
-⁶ A Colmi/Yawell ring that shipped with the **SmartHealth** app rather than QRing — R09/R10 confirmed, other models possible. It speaks the TK5's YCBT protocol, so it runs the same driver. 🧪 throughout: **no unit has been connected yet**. See [SmartHealth-app Colmi rings](colmi.md#smarthealth-app-colmi-rings).
+⁶ A Colmi/Yawell ring that shipped with the **SmartHealth** app rather than QRing — R09/R10 confirmed, other models possible. It speaks the TK5's YCBT protocol, so it runs the same driver. The family is **verified on hardware** (an R99 runs against the driver daily — connect, battery, activity/sleep/HR/BP/vitals sync); 🧪 marks the capabilities not yet individually cross-checked against the vendor app. See [SmartHealth-app Colmi rings](colmi.md#smarthealth-app-colmi-rings).
 ⁷ Sensor-dependent, so it is claimed **per ring** rather than per family: the handshake reads the ring's own capability bitmap and PulseLoop enables the metric only if the ring claims it.
 ⁸ Not claimed: no capability bit names fatigue, so it can be neither gated nor honestly promised on hardware nobody has connected. The first real sync decides.
 
@@ -189,9 +189,10 @@ Multiple hardware platforms span from $7 commodity rings to $350 premium devices
 |---|---|---|---|---|---|
 | **[56ff / Jring](jring.md)** | Renesas DA14531 | Custom 56ff (SXR KeepFit SDK) | Jring / KeepFit | $7–12 | ✅ App + FW |
 | **[Colmi / Yawell (QRing)](colmi.md)** | Realtek RTL8762 family | Nordic-UART (QRing) | QRing | $15–30 | ✅ App (R02 FW too) |
-| **[Colmi / Yawell (SmartHealth)](colmi.md#smarthealth-app-colmi-rings)** | Realtek RTL8762 family | Yucheng YCBT (`be940`) | SmartHealth | $15–30 | 🧪 App (limited — same protocol as the TK5) |
+| **[Colmi / Yawell (SmartHealth)](colmi.md#smarthealth-app-colmi-rings)** | Realtek RTL8762 family | Yucheng YCBT (`be940`) | SmartHealth | $15–30 | ✅ App (same protocol as the TK5; verified on an R99) |
 | **[Colmi R11](colmi.md#colmi-r11-qring-compatible-with-fidget-shell)** | Realtek AB2026 | Nordic-UART QRing | QRing / Da Rings | ~$15–25 | ✅ App (untested) |
 | **[TK5](tk5.md)** | JieLi (part ❓) | Yucheng YCBT (`be940`) | SmartHealth | ❓ | 🧪 App (limited) |
+| **[LuckRing / TK18](luckring.md)** | ❓ (Coolwear/Kewo OEM) | Custom "K6" (`F618`) | LuckRing | ~$10 | 🧪 App (limited) |
 | **[SIMSONLAB](simsonlab.md)** | Phyplus PHY6222 | Unknown | SIMSONLAB app | ~$10–20 | ❌ |
 
 ### Premium Rings

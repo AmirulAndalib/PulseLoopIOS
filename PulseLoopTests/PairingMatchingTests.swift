@@ -301,7 +301,7 @@ final class PairingMatchingTests: XCTestCase {
         // The user still outranks everything, in both directions.
         XCTAssertEqual(card.preferredFamily(picked: .qring, rowFamily: .colmiSmartHealth, hinted: nil), .colmiR02)
         XCTAssertEqual(card.otherVariant(than: .smartHealth), .qring)
-        XCTAssertEqual(card.supportLevel, .limited)
+        XCTAssertEqual(card.supportLevel, .full)
         // No R99 art exists; nil is the only value `RingArtView` has a fallback for.
         XCTAssertNil(card.imageName)
     }
@@ -683,14 +683,14 @@ final class PairingMatchingTests: XCTestCase {
         XCTAssertEqual(RingDeviceType.jring.supportLevel, .full)
         XCTAssertEqual(RingDeviceType.colmiR02.supportLevel, .full)
         XCTAssertEqual(RingDeviceType.tk5.supportLevel, .limited)
-        XCTAssertEqual(RingDeviceType.colmiSmartHealth.supportLevel, .limited)
+        XCTAssertEqual(RingDeviceType.colmiSmartHealth.supportLevel, .full)
     }
 
-    /// Both YCBT families are unproven, and only unproven families get a badge. The two cards that
-    /// *default* to one — the TK5 and the R99 — therefore wear it as they sit; a two-app Colmi card wears
-    /// it only while its picker is on SmartHealth (the same physical ring, a different driver's maturity).
+    /// Only unproven families get a badge — the TK5 (never connected on hardware) and the LuckRing
+    /// family (only the TK18 unit is proven). The SmartHealth-Colmi graduated to `.full` once an R99
+    /// ran against the driver on hardware, so neither Colmi picker position wears a badge anymore.
     func testLimitedSupportFamiliesCarryTheBadge() {
-        let limitedByDefault: Set<String> = [WearableModel.tk5.id, WearableModel.colmiR99.id, WearableModel.luckRingTK18.id]
+        let limitedByDefault: Set<String> = [WearableModel.tk5.id, WearableModel.luckRingTK18.id]
         for model in WearableModel.catalog {
             let expected: WearableSupportLevel = limitedByDefault.contains(model.id) ? .limited : .full
             XCTAssertEqual(model.supportLevel, expected, model.displayName)
@@ -702,7 +702,7 @@ final class PairingMatchingTests: XCTestCase {
         }
         for model in WearableModel.catalog where !model.appVariants.isEmpty {
             XCTAssertEqual(model.supportLevel(for: .qring), .full, model.displayName)
-            XCTAssertEqual(model.supportLevel(for: .smartHealth), .limited, model.displayName)
+            XCTAssertEqual(model.supportLevel(for: .smartHealth), .full, model.displayName)
         }
     }
 

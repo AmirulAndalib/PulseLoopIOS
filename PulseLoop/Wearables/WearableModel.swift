@@ -108,11 +108,10 @@ extension RingDeviceType {
     /// How proven this family's driver is. Exhaustive on purpose: a new family must state its level.
     var supportLevel: WearableSupportLevel {
         switch self {
-        case .jring, .colmiR02: return .full
-        // Both YCBT families are unproven on hardware. The SmartHealth-Colmi has never been connected
-        // at all — its advertisement, its capability bitmap and its history types are all still
-        // predictions (plan B6 is what settles them).
-        case .tk5, .colmiSmartHealth: return .limited
+        case .jring, .colmiR02, .colmiSmartHealth: return .full
+        // The TK5 is unproven on hardware — its advertisement, capability bitmap and history types
+        // are still predictions.
+        case .tk5: return .limited
         // TK18 is the only hardware-tested LuckRing; every 0xFF64 sibling is still a prediction.
         case .luckRing: return .limited
         }
