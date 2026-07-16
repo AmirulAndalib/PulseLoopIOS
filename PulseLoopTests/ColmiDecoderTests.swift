@@ -53,6 +53,34 @@ final class ColmiDecoderTests: XCTestCase {
         XCTAssertEqual(percent, 84)
     }
 
+    // MARK: Activity history buckets
+
+    /// Two quarter-hour buckets in the same hour must decode to distinct timestamps (:30 vs :45).
+    /// Regression: the decoder used to hard-code minute 0, collapsing all four quarters of an hour
+    /// onto HH:00; since day totals sum buckets keyed by start epoch, three of four quarters
+    /// overwrote each other and steps/distance were undercounted by up to ~75%.
+    func testActivityHistoryPreservesQuarterHourOffset() {
+        // Reference clock so the decoded timestamp lands inside the [now-8d, now+1h] window.
+        let now = calendar.date(from: DateComponents(year: 2026, month: 7, day: 13, hour: 12))!
+        // BCD-literal date bytes for 2026-07-13, then the quarter-of-day index and steps=u16(v9,v10).
+        func frame(quarter: UInt8, steps: UInt8) -> Data {
+            ColmiPacket.frame([ColmiCommandID.syncActivity, 0x26, 0x07, 0x13, quarter,
+                               0, 0, 0, 0, steps, 0, 0, 0])
+        }
+        guard case let .activityBucket(ts6, s6, _) =
+                decoder.decodeHistory(frame(quarter: 6, steps: 100), day: now, calendar: calendar, now: now).first,
+              case let .activityBucket(ts7, s7, _) =
+                decoder.decodeHistory(frame(quarter: 7, steps: 200), day: now, calendar: calendar, now: now).first else {
+            return XCTFail("expected activityBucket events")
+        }
+        XCTAssertEqual(s6, 100)
+        XCTAssertEqual(s7, 200)
+        XCTAssertEqual(calendar.component(.hour, from: ts6), 1)
+        XCTAssertEqual(calendar.component(.minute, from: ts6), 30)  // quarter 6 → 01:30
+        XCTAssertEqual(calendar.component(.minute, from: ts7), 45)  // quarter 7 → 01:45
+        XCTAssertNotEqual(ts6, ts7, "same-hour quarter buckets must not share a timestamp/epoch")
+    }
+
     func testRealtimeHeartRate() {
         let frame = ColmiPacket.frame([ColmiCommandID.realtimeHeartRate, 72])
         let events = decoder.decodeNormal(frame)
@@ -193,6 +221,23 @@ final class ColmiDecoderTests: XCTestCase {
             return nil
         }
         XCTAssertEqual(spo2s.first, 97)
+    }
+
+    /// The QRing-Colmi SpO₂ log is emitted with no floor of its own (`lo > 0, hi > 0`), and before the
+    /// shared bridge grew a per-kind history gate, every value it produced was persisted. A severe
+    /// nocturnal desaturation is the reading a user with sleep apnea most needs kept — the gate is there
+    /// to drop the ring's "no sample" fillers and misframed bytes, not real hypoxemia — so it has to
+    /// survive the whole decoder → bridge path, not just the decoder.
+    func testSevereDesaturationSurvivesTheSharedHistoryGate() throws {
+        var payload: [UInt8] = [0x00, 60, 76]   // hour 0: min 60 %, max 76 % → mean 68 %
+        payload.append(contentsOf: [UInt8](repeating: 0, count: 46))
+        let frame = bigData(type: ColmiCommandID.bigDataSpo2, payload: payload)
+        let decoded = try XCTUnwrap(decoder.decodeBigData(frame, calendar: calendar).first)
+        guard case let .historyMeasurement(kind, value, _) = decoded, kind == .spo2 else {
+            return XCTFail("expected an SpO₂ history sample, got \(decoded.kind)")
+        }
+        XCTAssertEqual(value, 68)
+        XCTAssertEqual(RingEventBridge.events(for: decoded).count, 1, "the bridge dropped a real desaturation")
     }
 
     func testSleepBigDataMapsStages() {

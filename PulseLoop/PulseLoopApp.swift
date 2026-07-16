@@ -29,6 +29,8 @@ struct PulseLoopApp: App {
     private let diagnostics: DiagnosticsSubscriber
     /// Retained so it keeps projecting synced data into the home-screen-widget snapshot.
     private let widgetPublisher: WidgetSnapshotPublisher
+    /// Retained so it keeps exporting newly-synced ring data into Apple Health.
+    private let healthSyncPublisher: HealthSyncPublisher
     /// Retained so the UNUserNotificationCenter delegate stays alive.
     private let notificationDelegate = CoachNotificationDelegate()
 
@@ -63,6 +65,10 @@ struct PulseLoopApp: App {
         // One-time merge of sleep sessions split across midnight by the old start-of-day grouping.
         SleepService.migrateSplitSleepSessionsIfNeeded(context: container.mainContext)
 
+        // One-time re-split of days whose nap merged into that morning's night (issue #59): re-derive
+        // each waking day into distinct sessions so the carousel can page through them.
+        SleepService.migrateSleepSessionSegmentsIfNeeded(context: container.mainContext)
+
         // A persisted "connected" state can't survive a restart — the live link is gone. Reset it so
         // the UI never shows a false "Connected" until a real connection re-confirms.
         if !runningTests {
@@ -87,6 +93,8 @@ struct PulseLoopApp: App {
         self.diagnostics = diagnostics
         let widgetPublisher = WidgetSnapshotPublisher(context: container.mainContext)
         self.widgetPublisher = widgetPublisher
+        let healthSyncPublisher = HealthSyncPublisher(context: container.mainContext)
+        self.healthSyncPublisher = healthSyncPublisher
 
         // Skip the live subsystems entirely under XCTest — the test target exercises these
         // components directly with their own fixtures; the app host just needs to launch cleanly.
@@ -101,6 +109,7 @@ struct PulseLoopApp: App {
         batteryAlertMonitor.start()
         diagnostics.start()
         widgetPublisher.start()
+        healthSyncPublisher.start()
 
         // Daily check-in notifications: route taps + register the background wake.
         UNUserNotificationCenter.current().delegate = notificationDelegate
@@ -126,7 +135,10 @@ struct PulseLoopApp: App {
             // Republish the widget snapshot at scene edges: leaving-active captures the freshest
             // flushed data before suspension; becoming-active catches Settings edits (goals, units,
             // visibility) that change tiles without bumping the sync token. No-ops when unchanged.
-            if !Self.isRunningUnitTests { widgetPublisher.publish(reason: .scenePhase) }
+            if !Self.isRunningUnitTests {
+                widgetPublisher.publish(reason: .scenePhase)
+                healthSyncPublisher.kick()
+            }
             guard phase == .active else { return }
             // Foreground reconnect: the OS can silently tear down the BLE link while suspended without
             // delivering a disconnect, leaving us "connected" but dead. On every resume, re-link the
