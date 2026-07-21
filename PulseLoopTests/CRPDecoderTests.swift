@@ -4,14 +4,15 @@ import CoreBluetooth
 
 /// Unit tests for CRP inbound decoding + reassembly (`CRPDecoder`, `CRPFrameAssembler`) and the
 /// `CRPDriver.ingest` routing. Byte layouts are from the decompiled Moyoung app (`e1/k.b` steps,
-/// `g1/a.B` heart rate, `g1/a.k` frame reassembly). No BLE stack needed. Ported from the Android
-/// app's `CRPDecoderTest.kt`.
+/// `e1/f.b` HR, `g1/a.k` frame reassembly). No BLE stack needed. Ported from the Android app's
+/// `CRPDecoderTest.kt`.
 @MainActor
 final class CRPDecoderTests: XCTestCase {
 
     private let fdd1 = CRPUUIDs.stepsNotifyCBUUID
     private let fdd3 = CRPUUIDs.cmdNotifyCBUUID
-    private let hr = CRPUUIDs.heartRateMeasureCBUUID
+
+    // MARK: - Steps
 
     func testCurrentStepsPushDecodesLittleEndianStepsDistanceCalories() {
         // steps=1000 (E8 03 00), distance=500 (F4 01 00), calories=42 (2A 00 00)
@@ -40,21 +41,7 @@ final class CRPDecoderTests: XCTestCase {
         XCTAssertTrue(CRPDecoder.decode(Data([1, 2]), from: fdd1).isEmpty)
     }
 
-    func testHeartRate2a37ReadsBpmFromByte1WhenThe0x0400MarkerIsPresent() {
-        // [status, bpm=72, 0x00, 0x04] -> marker bytes[2..3] == 0x0400
-        guard case let .heartRateSample(bpm, _) = CRPDecoder.decode(Data([0x00, 72, 0x00, 0x04]), from: hr)[0] else {
-            return XCTFail("expected heartRateSample")
-        }
-        XCTAssertEqual(bpm, 72)
-    }
-
-    func testHeartRate2a37WithWrongMarkerIsDropped() {
-        XCTAssertTrue(CRPDecoder.decode(Data([0x00, 72, 0x00, 0x08]), from: hr).isEmpty)
-    }
-
-    func testHeartRate2a37WithZeroBpmIsDropped() {
-        XCTAssertTrue(CRPDecoder.decode(Data([0x00, 0, 0x00, 0x04]), from: hr).isEmpty)
-    }
+    // MARK: - Assembler
 
     func testAssemblerReturnsASinglePacketFrameImmediately() {
         let a = CRPFrameAssembler()
@@ -75,6 +62,87 @@ final class CRPDecoderTests: XCTestCase {
         let a = CRPFrameAssembler()
         XCTAssertNil(a.append(Data([1, 2, 3, 4])))
     }
+
+    // MARK: - Vital result decoding (group 1, real-time)
+
+    func testGroup1Cmd9DecodesHeartRateBpm() {
+        // HR response: group1/cmd9, payload[0]=74 (0x4A) → 74 bpm
+        let frame = CRPProtocol.frame(group: 1, cmd: CRPCommands.cmdMeasureHR, payload: [0x4A])
+        let events = CRPDecoder.decode(frame, from: fdd3)
+        XCTAssertEqual(events.count, 1)
+        guard case let .heartRateSample(bpm, _) = events[0] else {
+            return XCTFail("expected heartRateSample, got \(events[0])")
+        }
+        XCTAssertEqual(bpm, 74)
+    }
+
+    func testGroup1Cmd9HeartRateBelowPlausibilityThresholdDropped() {
+        // bpm=30 is below the 40..200 guard.
+        let frame = CRPProtocol.frame(group: 1, cmd: CRPCommands.cmdMeasureHR, payload: [0x1E])
+        XCTAssertTrue(CRPDecoder.decode(frame, from: fdd3).isEmpty)
+    }
+
+    func testGroup1Cmd9HeartRateAbovePlausibilityThresholdDropped() {
+        // bpm=250 is above the 40..200 guard.
+        let frame = CRPProtocol.frame(group: 1, cmd: CRPCommands.cmdMeasureHR, payload: [0xFA])
+        XCTAssertTrue(CRPDecoder.decode(frame, from: fdd3).isEmpty)
+    }
+
+    func testGroup1Cmd10DecodesHRV() {
+        // HRV response: group1/cmd10, payload[0]=45 → 45 ms
+        let frame = CRPProtocol.frame(group: 1, cmd: CRPCommands.cmdEnableTimingHRV, payload: [0x2D])
+        let events = CRPDecoder.decode(frame, from: fdd3)
+        XCTAssertEqual(events.count, 1)
+        guard case let .hrvSample(value, _) = events[0] else {
+            return XCTFail("expected hrvSample, got \(events[0])")
+        }
+        XCTAssertEqual(value, 45)
+    }
+
+    func testGroup1Cmd11DecodesSpO2() {
+        // SpO2 response: group1/cmd11, payload[0]=96 → 96%
+        let frame = CRPProtocol.frame(group: 1, cmd: CRPCommands.cmdEnableTimingSpO2, payload: [0x60])
+        let events = CRPDecoder.decode(frame, from: fdd3)
+        XCTAssertEqual(events.count, 1)
+        guard case let .spo2Result(value, _) = events[0] else {
+            return XCTFail("expected spo2Result, got \(events[0])")
+        }
+        XCTAssertEqual(value, 96)
+    }
+
+    func testGroup1Cmd14DecodesStress() {
+        // Stress response: group1/cmd14, payload[0]=42 → stress 42
+        let frame = CRPProtocol.frame(group: 1, cmd: CRPCommands.cmdEnableTimingStress, payload: [0x2A])
+        let events = CRPDecoder.decode(frame, from: fdd3)
+        XCTAssertEqual(events.count, 1)
+        guard case let .stressSample(value, _) = events[0] else {
+            return XCTFail("expected stressSample, got \(events[0])")
+        }
+        XCTAssertEqual(value, 42)
+    }
+
+    func testGroup1Cmd32DecodesTemperature() {
+        // Temp response: group1/cmd32, payload[0]=38 → 38 °C (placeholder layout)
+        let frame = CRPProtocol.frame(group: 1, cmd: CRPCommands.cmdEnableTimingTemp, payload: [0x26])
+        let events = CRPDecoder.decode(frame, from: fdd3)
+        XCTAssertEqual(events.count, 1)
+        guard case let .temperatureSample(celsius, _) = events[0] else {
+            return XCTFail("expected temperatureSample, got \(events[0])")
+        }
+        XCTAssertEqual(celsius, 38.0)
+    }
+
+    func testGroup1UnknownCmdReturnsCommandAck() {
+        // Unknown cmd in group 1 → ack, not a fabricated metric.
+        let frame = CRPProtocol.frame(group: 1, cmd: 99)
+        let events = CRPDecoder.decode(frame, from: fdd3)
+        XCTAssertEqual(events.count, 1)
+        guard case .commandAck = events[0] else {
+            return XCTFail("expected commandAck, got \(events[0])")
+        }
+    }
+
+    // MARK: - Driver routing
 
     func testDriverRoutesFdd1ToStepsAndReassemblesFdd3Replies() {
         let driver = CRPDriver(writer: nil)

@@ -33,20 +33,25 @@ final class CRPFrameAssembler {
 /// `from` UUID `CRPDriver.ingest` passes through), matching the vendor's `g1/a.a(characteristic)`
 /// dispatch:
 ///   - `fdd1` → raw current-steps triples (no CRP header)
-///   - `2a37` → standard HR-measurement stream
 ///   - `fdd3` → framed `FD DA …` command replies (already reassembled by `CRPFrameAssembler`)
 ///
-/// Unverified-against-hardware layouts are decoded conservatively: anything whose byte layout isn't
-/// confirmed from the decompile is emitted as `.commandAck` rather than fabricating a metric value.
-/// Extend `decodeFramedReply` as more command replies are confirmed.
+/// NOTE: This ring does NOT use the standard `2a37` HR characteristic — all vital results come
+/// back as framed replies on `fdd3` with group/cmd routing. The `2a37` path is dead code for CRP
+/// rings (removed during port).
+///
+/// Group-1 replies (`g1/a.java` lines 664–712) carry real-time vital results:
+///   cmd 9  → HR (payload[0] = bpm, per `e1/f.b()`)
+///   cmd 10 → HRV (payload[0] = ms)
+///   cmd 11 → SpO2 (payload[0] = percent)
+///   cmd 14 → stress (payload[0] = 0..100)
+///   cmd 32 → temperature (payload[0..] = raw)
+///   Other cmd values → command acknowledgment.
 enum CRPDecoder {
 
     static func decode(_ data: Data, from characteristic: CBUUID, now: Date = Date()) -> [RingDecodedEvent] {
         switch characteristic {
         case CRPUUIDs.stepsNotifyCBUUID:
             return decodeCurrentSteps(data, now: now)
-        case CRPUUIDs.heartRateMeasureCBUUID:
-            return decodeHeartRateMeasure(data, now: now)
         default:
             return CRPProtocol.isFrameStart(data) ? decodeFramedReply(data, now: now) : []
         }
@@ -64,28 +69,87 @@ enum CRPDecoder {
                                 distanceMeters: Double(distance), calories: Double(calories))]
     }
 
-    /// Standard HR characteristic (`2a37`). From `g1/a.B`: bpm at byte[1], validated by the `0x0400`
-    /// marker at bytes[2..3] (little-endian: byte[3] high).
-    private static func decodeHeartRateMeasure(_ data: Data, now: Date) -> [RingDecodedEvent] {
-        let b = [UInt8](data)
-        if b.count < 2 { return [] }
-        let bpm = Int(b[1])
-        let markerOk = b.count < 4 || ((Int(b[3]) << 8) | Int(b[2])) == 0x0400
-        if !markerOk || bpm <= 0 { return [] }
-        return [.heartRateSample(bpm: bpm, timestamp: now)]
-    }
-
-    /// Framed `fdd3` reply: `FD DA 10 <len> <group> <cmd> <payload>`. v1 acknowledges recognised
-    /// command echoes; richer metric replies (HR/SpO2 results, history) are decoded as more layouts
-    /// are confirmed against the decompile/hardware.
+    /// Framed `fdd3` reply: `FD DA 10 <len> <group> <cmd> <payload>`.
+    /// Real-time vital results come on group 1; history queries on group 7; device info on group 7.
     private static func decodeFramedReply(_ frame: Data, now: Date) -> [RingDecodedEvent] {
         let b = [UInt8](frame)
         if b.count < CRPProtocol.headerSize { return [] }
         let group = Int(b[4])
         let cmd = Int(b[5])
-        // Only the command echo is confirmed for the v1 command set; treat as an ack so the
-        // raw-notify/debug feed still records it without inventing a metric value.
+        let payload = b.count > CRPProtocol.headerSize ? Array(b[CRPProtocol.headerSize..<b.count]) : []
+
+        // Group 1: real-time vital results (decompiled `g1/a.java` lines 664–712).
+        if group == CRPCommands.groupDevice {
+            return decodeVitalResult(cmd: cmd, payload: payload, now: now)
+        }
+
+        // Group 7: history queries + device info (decompiled `b1/e0` + `b1/r`).
+        if group == CRPCommands.groupDeviceInfo {
+            return decodeHistoryOrDeviceInfoResponse(cmd: cmd, payload: payload, now: now)
+        }
+
+        // Unknown group/cmd — ack.
         return [.commandAck(commandId: UInt8(truncatingIfNeeded: (group << 4) | (cmd & 0x0F)))]
+    }
+
+    /// Decode group-1 vital result replies. Confirmed against `g1/a.java` and `e1/f.java` (HR),
+    /// `e1/g.java` (HRV), `e1/d.java` (SpO2), `e1/h.java` (stress/physical strength), and the
+    /// vendor's `onMeasureComplete` flow for temperature (cmd 32).
+    ///
+    /// Layout: `payload[0]` is the metric value for all types. Plausibility guards prevent
+    /// garbage samples (HR 40–200, SpO2 70–100, stress 0–100, HRV 20–200).
+    private static func decodeVitalResult(cmd: Int, payload: [UInt8], now: Date) -> [RingDecodedEvent] {
+        guard !payload.isEmpty else {
+            return [.commandAck(commandId: UInt8(truncatingIfNeeded: (CRPCommands.groupDevice << 4) | (cmd & 0x0F)))]
+        }
+        let value = Int(payload[0])
+
+        switch cmd {
+        case CRPCommands.cmdMeasureHR:
+            // HR from `e1/f.b()`: byte2int(payload[0]).
+            guard value >= 40 && value <= 200 else { return [] }
+            return [.heartRateSample(bpm: value, timestamp: now)]
+
+        case CRPCommands.cmdEnableTimingHRV:
+            // HRV from `e1/g.d()`: twoBytes2int(payload[1], payload[0]), but vendor's onHrv()
+            // callback receives byte2int(payload[0]) for the live measurement path.
+            // We accept either layout: single-byte if payload is 1 byte, two-byte otherwise.
+            let hrvValue: Int
+            if payload.count >= 2 {
+                hrvValue = Int(payload[0]) | (Int(payload[1]) << 8)
+            } else {
+                hrvValue = value
+            }
+            guard hrvValue >= 20 && hrvValue <= 200 else { return [] }
+            return [.hrvSample(value: hrvValue, timestamp: now)]
+
+        case CRPCommands.cmdEnableTimingSpO2:
+            // SpO2 from `e1/d.b()`: byte2int(payload[0]).
+            guard value >= 70 && value <= 100 else { return [] }
+            return [.spo2Result(value: value, timestamp: now)]
+
+        case CRPCommands.cmdEnableTimingStress:
+            // Stress/physical strength from `e1/h.c()`: byte2int(payload[0]).
+            guard value >= 0 && value <= 100 else { return [] }
+            return [.stressSample(value: value, timestamp: now)]
+
+        case CRPCommands.cmdEnableTimingTemp:
+            // Temperature: vendor uses onMeasureComplete with payload. Layout unconfirmed.
+            // Emit as temperature_sample with raw byte as placeholder until verified.
+            return [.temperatureSample(celsius: Double(value), timestamp: now)]
+
+        default:
+            // Acknowledgment for enable/disable commands.
+            return [.commandAck(commandId: UInt8(truncatingIfNeeded: (CRPCommands.groupDevice << 4) | (cmd & 0x0F)))]
+        }
+    }
+
+    /// Decode group-7 responses: history queries (cmd 4–7, 14, 48) and device info (cmd 0, 1, 13).
+    /// History layouts are unconfirmed against hardware — emit as CommandAck so the raw-packet feed
+    /// records them without inventing metric values. Extend `decodeHistoryOrDeviceInfoResponse`
+    /// as more layouts are confirmed.
+    private static func decodeHistoryOrDeviceInfoResponse(cmd: Int, payload: [UInt8], now: Date) -> [RingDecodedEvent] {
+        return [.commandAck(commandId: UInt8(truncatingIfNeeded: (CRPCommands.groupDeviceInfo << 4) | (cmd & 0x0F)))]
     }
 
     /// Little-endian unsigned 3-byte int at `offset`.

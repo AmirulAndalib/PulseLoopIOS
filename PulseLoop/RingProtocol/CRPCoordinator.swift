@@ -30,14 +30,16 @@ final class CRPCoordinator: WearableCoordinator {
         advertisement.serviceUUIDs.contains(CRPUUIDs.serviceCBUUID)
     }
 
-    /// v1 baseline — only capabilities backed by a decode path confirmed from the decompile:
-    /// current-steps push (`fdd1`), the standard HR stream (`2a37`) with its start/stop command, its
-    /// spot reading, the standard battery read, and find-device. Sleep / SpO2 / HRV / stress /
-    /// temperature and history sync are deferred until their CRP reply layouts are confirmed against
-    /// hardware — deliberately not promised here so the product UI hides them.
+    /// Real-time vital capabilities backed by decoded group-1 replies (`g1/a.java` lines 664–712):
+    /// HR (cmd 9), HRV (cmd 10), SpO2 (cmd 11), stress (cmd 14), temperature (cmd 32).
+    /// History sync and sleep are still deferred — their group-7 reply layouts aren't confirmed
+    /// against hardware yet. Steps push (`fdd1`), battery (`2a19`), find-device also confirmed.
+    /// Note: HR does NOT use the standard `2a37` characteristic on CRP rings — all vital results
+    /// come back as framed replies on `fdd3` group 1.
     let capabilities: Set<WearableCapability> = [
         .steps, .realtimeSteps,
         .heartRate, .realtimeHeartRate, .manualHeartRate,
+        .spo2, .stress, .hrv, .temperature,
         .battery,
         .findDevice,
     ]

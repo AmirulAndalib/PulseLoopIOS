@@ -61,6 +61,9 @@ enum CRPUUIDs {
 
 /// CRP command groups + subcommands (verified from the decompiled `b1` package builders).
 /// Only the v1 subset is enumerated; the vendor SDK spans groups 1–10 with dozens of subcommands.
+///
+/// **NOTE on disable:** HR/HRV/SpO2/Stress disable by sending enable with interval=0. Temp disable
+/// uses a separate cmd (32) with `[false]`. (Per `d1/b.java` `disableTiming*` methods.)
 enum CRPCommands {
     // Group 1 — device config / measurement control.
     static let groupDevice = 1
@@ -68,6 +71,28 @@ enum CRPCommands {
     static let cmdSetTime = 1         // b1/e.b: [epochSecondsLE(4), tzByte]
     static let cmdMeasureHR = 9       // b1/t.d: [enable] — start(1)/stop(0) continuous HR
     static let cmdMeasureSpO2 = 11    // b1/h.d: [enable] — start(1)/stop(0) SpO2
+
+    // Group 1 — timing/enable controls (decompiled b1 package).
+    // Disable: HR/HRV/SpO2/Stress use enable with interval=0. Temp uses a separate cmd.
+    static let cmdEnableTimingHR = 6        // b1/t.c: q.c(1,6, [interval])
+    static let cmdEnableTimingHRV = 7       // b1/u.c: q.c(1,7, [interval])
+    static let cmdEnableTimingSpO2 = 8      // b1/h.c: q.c(1,8, [interval])
+    static let cmdEnableTimingStress = 39   // b1/h0.c: q.c(1,39, [interval])
+    static let cmdEnableTimingTemp = 13     // b1/i0.c: q.c(1,13, [true])
+    static let cmdDisableTimingTemp = 32    // b1/i0.d: q.c(1,32, [false])
+
+    // Group 7 — history queries + device info (decompiled b1/e0 + b1/r).
+    // NOTE: History queries are group 7, NOT group 2 (the b1/e0 builders use q.b(7,…) and q.c(7,…)).
+    static let groupDeviceInfo = 7
+    static let cmdQueryDeviceInfo = 0       // b1/r.a: q.b(7,0)
+    static let cmdQueryFirmwareVersion = 1  // b1/r.b: q.b(7,1)
+    static let cmdQueryDeviceSN = 13        // b1/r.c: q.b(7,13)
+    static let cmdQueryHistoryHR = 4        // b1/e0.a: q.b(7,4)
+    static let cmdQueryHistoryStress = 5    // b1/e0.b: q.c(7,5, [interval])
+    static let cmdQueryHistoryHRV = 6       // b1/e0.e: q.c(7,6, [interval])
+    static let cmdQueryHistorySpO2 = 7      // b1/e0.f: q.b(7,7)
+    static let cmdQueryHistorySleep = 14    // b1/e0.c: q.c(2,14, [CRPHistoryDay])
+    static let cmdQueryHistoryTemp = 48     // b1/e0.d: q.b(7,48)
 
     // Group 3 — power control.
     static let groupPower = 3
@@ -107,8 +132,8 @@ enum CRPProtocol {
     }
 
     /// Total declared length of a frame whose header is `data`. Mirrors the vendor's
-    /// `H(byte[2], byte[3])`: the length's 9th bit rides bit0 of byte[2] (`0x10`), so long history
-    /// frames (>255 bytes) decode correctly. Returns 0 if `data` is too short.
+    /// `H(byte[2], byte[3])`: the length's 9th bit rides bit0 of byte[2] (`0x10`), so long
+    /// history frames (>255 bytes) decode correctly. Returns 0 if `data` is too short.
     static func frameLength(_ data: Data) -> Int {
         guard data.count >= 4 else { return 0 }
         let b = [UInt8](data)
@@ -117,14 +142,10 @@ enum CRPProtocol {
 
     // MARK: - Command builders (v1 subset)
 
-    /// Set the device clock. Vendor quirk (`b1/e.b`): the wall-clock components are encoded as if the
-    /// zone were GMT+8, with a fixed tz byte of 8 — the ring then displays the correct local wall clock
-    /// regardless of the phone's real timezone. Replicated verbatim so history stamps agree with what
-    /// the vendor app would have written.
-    ///
-    /// The Android source builds this from `LocalDateTime.now().toEpochSecond(ZoneOffset.ofHours(8))`:
-    /// the phone's local wall clock re-interpreted as a GMT+8 instant. The equivalent here takes the
-    /// real epoch, adds the phone's own UTC offset to get the wall-clock-as-seconds, then subtracts 8h.
+    /// Set the device clock. Vendor quirk (`b1/e.b`): the wall-clock components are encoded as if
+    /// the zone were GMT+8, with a fixed tz byte of 8 — the ring then displays the correct local
+    /// wall clock regardless of the phone's real timezone. Replicated verbatim so history stamps
+    /// agree with what the vendor app would have written.
     static func setTime(date: Date = Date(), timeZone: TimeZone = .current) -> Data {
         let offset = timeZone.secondsFromGMT(for: date)
         let wallClockSeconds = date.timeIntervalSince1970 + Double(offset)
@@ -164,5 +185,86 @@ enum CRPProtocol {
 
     static func factoryReset() -> Data {
         frame(group: CRPCommands.groupPower, cmd: CRPCommands.cmdFactoryReset)
+    }
+
+    // MARK: - Timing/enable commands (group 1)
+    // HR/HRV/SpO2/Stress disable by sending enable with interval=0 (per d1/b.java disable* methods).
+    // Temp disable uses a separate cmd (32) with `[false]` (per b1/i0.d and d1/b.java disableTimingTemp).
+    static func enableTimingHeartRate(intervalMinutes: Int) -> Data {
+        frame(group: CRPCommands.groupDevice, cmd: CRPCommands.cmdEnableTimingHR, payload: [UInt8(truncatingIfNeeded: intervalMinutes)])
+    }
+
+    static func disableTimingHeartRate() -> Data {
+        frame(group: CRPCommands.groupDevice, cmd: CRPCommands.cmdEnableTimingHR, payload: [0])
+    }
+
+    static func enableTimingHRV(intervalMinutes: Int) -> Data {
+        frame(group: CRPCommands.groupDevice, cmd: CRPCommands.cmdEnableTimingHRV, payload: [UInt8(truncatingIfNeeded: intervalMinutes)])
+    }
+
+    static func disableTimingHRV() -> Data {
+        frame(group: CRPCommands.groupDevice, cmd: CRPCommands.cmdEnableTimingHRV, payload: [0])
+    }
+
+    static func enableTimingSpO2(intervalMinutes: Int) -> Data {
+        frame(group: CRPCommands.groupDevice, cmd: CRPCommands.cmdEnableTimingSpO2, payload: [UInt8(truncatingIfNeeded: intervalMinutes)])
+    }
+
+    static func disableTimingSpO2() -> Data {
+        frame(group: CRPCommands.groupDevice, cmd: CRPCommands.cmdEnableTimingSpO2, payload: [0])
+    }
+
+    static func enableTimingStress(intervalMinutes: Int) -> Data {
+        frame(group: CRPCommands.groupDevice, cmd: CRPCommands.cmdEnableTimingStress, payload: [UInt8(truncatingIfNeeded: intervalMinutes)])
+    }
+
+    static func disableTimingStress() -> Data {
+        frame(group: CRPCommands.groupDevice, cmd: CRPCommands.cmdEnableTimingStress, payload: [0])
+    }
+
+    static func enableTimingTemp() -> Data {
+        frame(group: CRPCommands.groupDevice, cmd: CRPCommands.cmdEnableTimingTemp)
+    }
+
+    static func disableTimingTemp() -> Data {
+        frame(group: CRPCommands.groupDevice, cmd: CRPCommands.cmdDisableTimingTemp)
+    }
+
+    // MARK: - History query commands (group 7)
+    static func queryHistoryHeartRate() -> Data {
+        frame(group: CRPCommands.groupDeviceInfo, cmd: CRPCommands.cmdQueryHistoryHR)
+    }
+
+    static func queryHistoryStress() -> Data {
+        frame(group: CRPCommands.groupDeviceInfo, cmd: CRPCommands.cmdQueryHistoryStress)
+    }
+
+    static func queryHistoryHRV() -> Data {
+        frame(group: CRPCommands.groupDeviceInfo, cmd: CRPCommands.cmdQueryHistoryHRV)
+    }
+
+    static func queryHistorySpO2() -> Data {
+        frame(group: CRPCommands.groupDeviceInfo, cmd: CRPCommands.cmdQueryHistorySpO2)
+    }
+
+    static func queryHistorySleep(daysAgo: Int = 0) -> Data {
+        frame(group: CRPCommands.groupDeviceInfo, cmd: CRPCommands.cmdQueryHistorySleep, payload: [UInt8(truncatingIfNeeded: daysAgo)])
+    }
+
+    static func queryHistoryTemp() -> Data {
+        frame(group: CRPCommands.groupDeviceInfo, cmd: CRPCommands.cmdQueryHistoryTemp)
+    }
+
+    // MARK: - Device info queries (group 7)
+    static func queryDeviceInfo() -> Data {
+        frame(group: CRPCommands.groupDeviceInfo, cmd: CRPCommands.cmdQueryDeviceInfo)
+    }
+
+    static func queryFirmwareVersion() -> Data {
+        frame(group: CRPCommands.groupDeviceInfo, cmd: CRPCommands.cmdQueryFirmwareVersion)
+    }
+
+    static func queryDeviceSN() -> Data {
+        frame(group: CRPCommands.groupDeviceInfo, cmd: CRPCommands.cmdQueryDeviceSN)
     }
 }

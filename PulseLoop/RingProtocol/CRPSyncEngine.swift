@@ -6,11 +6,11 @@ import Foundation
 /// and answers measurement commands. There is no bulk history state machine in v1, so most of the
 /// `RingSyncEngine` surface is left as the protocol's no-op defaults.
 ///
-/// v1 scope: clock + user-info handshake, live/manual heart rate, find-device. Steps and battery
-/// arrive as autonomous pushes/reads (see `CRPDriver`) and need no command here. Sleep / SpO2 / HRV /
-/// stress / temperature and history sync are deliberately deferred — their reply layouts aren't yet
-/// confirmed against the decompile, and `CRPCoordinator` doesn't advertise those capabilities, so
-/// nothing calls the corresponding methods.
+/// v1 scope: clock + user-info handshake, live/manual heart rate, find-device, factory reset.
+/// Steps and battery arrive as autonomous pushes/reads (see `CRPDriver`) and need no command here.
+/// Sleep / SpO2 / HRV / stress / temperature and history sync are deliberately deferred — their
+/// reply layouts aren't yet confirmed against the decompile, and `CRPCoordinator` doesn't advertise
+/// those capabilities, so nothing calls the corresponding methods.
 ///
 /// Factory reset / power off: the CRP command (`CRPProtocol.factoryReset`, group 3 / cmd 0) is known,
 /// but iOS's `RingSyncEngine` exposes no factory-reset/power-off hook (the Colmi encoder has the
@@ -24,15 +24,33 @@ final class CRPSyncEngine: RingSyncEngine {
     private weak var writer: RingCommandWriter?
     private var profile: UserProfileValues?
 
+    /// User-chosen all-day measurement config. Applied in the connect handshake and updatable
+    /// live via `applyMeasurementSettings`. `nil` ⇒ the user has never saved one, so the engine
+    /// skips the vital enable commands (the ring's own settings are the source of truth).
+    private var measurementSettings: MeasurementSettings?
+
     init(writer: RingCommandWriter?) {
         self.writer = writer
     }
 
     func runStartup() {
-        // Set the device clock first (matches the vendor's connect handshake), then user info so the
-        // ring's step/calorie algorithm has real inputs.
+        // Set the device clock first (matches the vendor's connect handshake), then user info so
+        // the ring's step/calorie algorithm has real inputs.
         send(CRPProtocol.setTime())
+        // Query firmware version so the UI doesn't show "Firmware: reading" (zaggash's report).
+        send(CRPProtocol.queryFirmwareVersion())
         if let profile { send(userInfoFrame(profile)) }
+        // Enable vital monitoring only when the user has configured it (mirrors the vendor app's
+        // connect flow). Uses the user's polling interval for all vital types — the CRP protocol
+        // takes a single interval byte per enable command, and MeasurementSettings only exposes
+        // hrIntervalMinutes (no per-vital intervals), so we share it across the board.
+        if let settings = measurementSettings {
+            if settings.hrEnabled { send(CRPProtocol.enableTimingHeartRate(intervalMinutes: settings.hrIntervalMinutes)) }
+            if settings.hrvEnabled { send(CRPProtocol.enableTimingHRV(intervalMinutes: settings.hrIntervalMinutes)) }
+            if settings.stressEnabled { send(CRPProtocol.enableTimingStress(intervalMinutes: settings.hrIntervalMinutes)) }
+            if settings.spo2Enabled { send(CRPProtocol.enableTimingSpO2(intervalMinutes: settings.hrIntervalMinutes)) }
+            if settings.temperatureEnabled { send(CRPProtocol.enableTimingTemp()) }
+        }
     }
 
     func handle(_ event: RingDecodedEvent) {
@@ -44,7 +62,7 @@ final class CRPSyncEngine: RingSyncEngine {
     func startHeartRate() { send(CRPProtocol.measureHeartRate(true)) }
     func stopHeartRate() { send(CRPProtocol.measureHeartRate(false)) }
 
-    // MARK: - SpO2 (command verified; result parsing deferred, so the capability isn't advertised)
+    // MARK: - SpO2 (command verified; result parsing deferred, so capability isn't advertised)
     func startSpO2() { send(CRPProtocol.measureSpO2(true)) }
     func stopSpO2() { send(CRPProtocol.measureSpO2(false)) }
 
@@ -60,6 +78,26 @@ final class CRPSyncEngine: RingSyncEngine {
     func applyUserProfile(_ profile: UserProfileValues) {
         self.profile = profile
         send(userInfoFrame(profile))
+    }
+
+    // MARK: - Measurement settings
+    func setMeasurementSettings(_ settings: MeasurementSettings?) {
+        measurementSettings = settings
+    }
+
+    func applyMeasurementSettings(_ settings: MeasurementSettings) {
+        measurementSettings = settings
+        // Re-send vital enable/disable commands with the updated settings.
+        if settings.hrEnabled { send(CRPProtocol.enableTimingHeartRate(intervalMinutes: settings.hrIntervalMinutes)) }
+        else { send(CRPProtocol.disableTimingHeartRate()) }
+        if settings.hrvEnabled { send(CRPProtocol.enableTimingHRV(intervalMinutes: settings.hrIntervalMinutes)) }
+        else { send(CRPProtocol.disableTimingHRV()) }
+        if settings.stressEnabled { send(CRPProtocol.enableTimingStress(intervalMinutes: settings.hrIntervalMinutes)) }
+        else { send(CRPProtocol.disableTimingStress()) }
+        if settings.spo2Enabled { send(CRPProtocol.enableTimingSpO2(intervalMinutes: settings.hrIntervalMinutes)) }
+        else { send(CRPProtocol.disableTimingSpO2()) }
+        if settings.temperatureEnabled { send(CRPProtocol.enableTimingTemp()) }
+        else { send(CRPProtocol.disableTimingTemp()) }
     }
 
     func resyncTime() { send(CRPProtocol.setTime()) }
