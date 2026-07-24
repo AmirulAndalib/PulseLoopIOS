@@ -2,8 +2,12 @@ import SwiftUI
 import SwiftData
 
 /// Settings → Nutrition: the master opt-in for calorie tracking plus its sub-settings.
-/// Privacy-first — everything below the master toggle only appears once it's on, and the
-/// footer states exactly where meal data lives and when it leaves the device.
+///
+/// Structure mirrors `AppleHealthSettingsView` 1:1 — the one master-toggle settings screen
+/// proven artifact-free on iOS 26 devices. Every group is ALWAYS rendered and gated with
+/// `.disabled/.opacity`; nothing is conditionally inserted or animated, because glass
+/// surfaces that appear/disappear morph through capsule shapes on device (the "circles"
+/// artifact two earlier revisions chased).
 struct NutritionSettingsView: View {
     @Environment(\.modelContext) private var modelContext
     @State private var store = NutritionPrefsStore.shared
@@ -13,61 +17,66 @@ struct NutritionSettingsView: View {
         Binding(get: { store.prefs }, set: { store.prefs = $0 })
     }
 
+    private var masterOn: Bool { store.prefs.masterEnabled }
+
     var body: some View {
         ScrollView {
-            VStack(spacing: 20) {
+            VStack(alignment: .leading, spacing: 22) {
                 SettingsGroup(
                     footer: "Meals are stored only on this device. Nothing is shared unless you turn it on below."
                 ) {
                     FormToggleRow(title: "Track nutrition", isOn: prefs.masterEnabled)
                 }
 
-                // Plain conditional reveal (the Coach settings idiom) — SettingsGroup already
-                // paints its own glass, so no extra glass/materialize here (a second glass layer
-                // rendered capsule artifacts over the groups on iOS 26 devices).
-                if store.prefs.masterEnabled {
-                    Group {
-                        NutritionGoalsGroup()
+                NutritionGoalsGroup()
+                    .disabled(!masterOn)
+                    .opacity(masterOn ? 1 : 0.5)
 
-                        SettingsGroup(
-                            header: "Integrations",
-                            footer: "Sharing with the coach adds your meals and goals to its context and check-ins. "
-                                + "Apple Health export writes dietary energy and macros (requires Apple Health sync to be on)."
-                        ) {
-                            FormToggleRow(title: "Share meals with Coach", isOn: prefs.shareWithCoach)
-                            if store.prefs.shareWithCoach {
-                                FormToggleRow(title: "Mention in check-ins", isOn: prefs.includeInNotifications)
-                                FormToggleRow(title: "Allow meal photo analysis", isOn: prefs.photoAnalysisEnabled)
-                            }
-                            FormToggleRow(
-                                title: "Export to Apple Health",
-                                isOn: Binding(
-                                    get: { healthStore.prefs.syncNutrition },
-                                    set: { healthStore.prefs.syncNutrition = $0 }
-                                )
-                            )
-                        }
+                integrationsGroup
+                    .disabled(!masterOn)
+                    .opacity(masterOn ? 1 : 0.5)
 
-                        SettingsGroup(header: "Display") {
-                            FormToggleRow(title: "Show on Today & widgets", isOn: prefs.showOnToday)
-                        }
-                    }
-                    .transition(.opacity)
+                SettingsGroup(header: "Display") {
+                    FormToggleRow(title: "Show on Today & widgets", isOn: prefs.showOnToday)
                 }
+                .disabled(!masterOn)
+                .opacity(masterOn ? 1 : 0.5)
             }
             .padding()
-            .padding(.bottom, PulseLayout.scrollBottomInset)
-            .animation(.default, value: store.prefs.masterEnabled)
         }
         .background(PulseColors.background)
         .pageChrome("Nutrition")
-        .pulseScrollEdges()
         .onChange(of: store.prefs.masterEnabled) { _, _ in
             // Tiles/cards/widgets gate on the master toggle — nudge dependents immediately.
             PulseDataChange.shared.notify()
         }
         .onChange(of: store.prefs.showOnToday) { _, _ in
             PulseDataChange.shared.notify()
+        }
+    }
+
+    /// Static row set — the coach sub-rows are gated per-row (not conditionally inserted)
+    /// so the glass-backed group never changes shape.
+    private var integrationsGroup: some View {
+        SettingsGroup(
+            header: "Integrations",
+            footer: "Sharing with the coach adds your meals and goals to its context and check-ins. "
+                + "Apple Health export writes dietary energy and macros (requires Apple Health sync to be on)."
+        ) {
+            FormToggleRow(title: "Share meals with Coach", isOn: prefs.shareWithCoach)
+            FormToggleRow(title: "Mention in check-ins", isOn: prefs.includeInNotifications)
+                .disabled(!store.prefs.shareWithCoach)
+                .opacity(store.prefs.shareWithCoach ? 1 : 0.5)
+            FormToggleRow(title: "Allow meal photo analysis", isOn: prefs.photoAnalysisEnabled)
+                .disabled(!store.prefs.shareWithCoach)
+                .opacity(store.prefs.shareWithCoach ? 1 : 0.5)
+            FormToggleRow(
+                title: "Export to Apple Health",
+                isOn: Binding(
+                    get: { healthStore.prefs.syncNutrition },
+                    set: { healthStore.prefs.syncNutrition = $0 }
+                )
+            )
         }
     }
 }
@@ -111,19 +120,19 @@ private struct NutritionGoalsGroup: View {
                 stepperRow("Fat", value: $fat, range: 0...200, step: 5,
                            format: { $0 == 0 ? "Not set" : "\(Int($0)) g" })
             }
-            if kcal > 0 {
-                FormField(padding: 12) {
-                    HStack {
-                        Text(helperText)
-                            .font(PulseFont.caption.weight(.regular).monospacedDigit())
-                            .foregroundStyle(drifted ? PulseColors.warning : PulseColors.textMuted)
-                        Spacer()
-                        if drifted || !macrosSet {
-                            Button("Balance macros") { rebalance() }
-                                .font(PulseFont.caption)
-                                .foregroundStyle(PulseColors.accent)
-                        }
-                    }
+            // Always-present helper row (static glass tree — see the view doc comment);
+            // only its text and the button's enabled state change.
+            FormField(padding: 12) {
+                HStack {
+                    Text(helperText)
+                        .font(PulseFont.caption.weight(.regular).monospacedDigit())
+                        .foregroundStyle(drifted ? PulseColors.warning : PulseColors.textMuted)
+                    Spacer()
+                    Button("Balance macros") { rebalance() }
+                        .font(PulseFont.caption)
+                        .foregroundStyle(PulseColors.accent)
+                        .disabled(kcal == 0 || (!drifted && macrosSet))
+                        .opacity(kcal > 0 && (drifted || !macrosSet) ? 1 : 0.4)
                 }
             }
         }
@@ -135,6 +144,7 @@ private struct NutritionGoalsGroup: View {
     }
 
     private var helperText: String {
+        guard kcal > 0 else { return "Set a calorie goal to balance macros" }
         guard macrosSet else { return "Macros not set" }
         return "Macros = \(Int(macroKcal).formatted()) kcal"
     }

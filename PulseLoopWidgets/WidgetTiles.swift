@@ -116,7 +116,7 @@ struct WidgetActivityContent: View {
     }
 }
 
-// MARK: - Nutrition (calorie-intake ring + macro mini-bars, from `NutritionTileView`)
+// MARK: - Nutrition (kcal headline + macro "fuel bar", from `NutritionTileView`)
 
 struct WidgetNutritionContent: View {
     let payload: WidgetNutritionPayload?
@@ -124,58 +124,62 @@ struct WidgetNutritionContent: View {
 
     private var active: WidgetNutritionPayload? { rolledOver ? nil : payload }
 
+    /// Proportional macro split, mirroring the in-app tile's fuel bar.
+    private func fuelSegments(_ payload: WidgetNutritionPayload) -> [SleepStageSegment] {
+        payload.macroRows
+            .filter { $0.value > 0 }
+            .map { SleepStageSegment(minutes: $0.value, color: Color(hex: $0.colorHex), label: $0.letter) }
+    }
+
     var body: some View {
-        if let payload = active {
-            HStack(spacing: 12) {
-                ActivityRingsView(
-                    rings: [ActivityRing(value: payload.kcal, goal: payload.kcalGoal, color: Color(hex: payload.ringColorHex))],
-                    size: 88, stroke: 9, spacing: 0
-                )
-                .overlay {
-                    VStack(spacing: 0) {
-                        Text(payload.centerText)
-                            .font(.system(size: 17, weight: .semibold, design: .rounded))
+        if let payload = active, payload.kcal > 0 {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    Text(payload.centerText)
+                        .font(.system(size: 30, weight: .semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(payload.kcalGoal > 0 && payload.kcal > payload.kcalGoal
+                                         ? Color(hex: payload.ringColorHex) : PulseColors.textPrimary)
+                        .minimumScaleFactor(0.7)
+                        .lineLimit(1)
+                    Text(payload.centerLabel)
+                        .font(.system(size: 10, weight: .semibold))
+                        .tracking(1.0)
+                        .foregroundStyle(PulseColors.textMuted)
+                }
+                let segments = fuelSegments(payload)
+                if segments.isEmpty {
+                    Capsule().fill(PulseColors.elevated).frame(height: 12)
+                } else {
+                    SleepStageBar(segments: segments)
+                        .frame(height: 28)
+                }
+                // Single compact stat line, matching the in-app tile (no wrap at small size).
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text("\(Int(payload.kcal.rounded()).formatted())")
+                        .font(.system(size: 13, weight: .semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(PulseColors.textPrimary)
+                    Text("EATEN")
+                        .font(.system(size: 9, weight: .semibold)).tracking(0.8)
+                        .foregroundStyle(PulseColors.calories)
+                    if payload.kcalGoal > 0 {
+                        Spacer(minLength: 4)
+                        Text("\(Int(payload.kcalGoal.rounded()).formatted())")
+                            .font(.system(size: 13, weight: .semibold))
                             .monospacedDigit()
-                            .foregroundStyle(PulseColors.textPrimary)
-                        Text(payload.centerLabel)
-                            .font(.system(size: 10, weight: .semibold))
-                            .tracking(0.8)
+                            .foregroundStyle(PulseColors.textSecondary)
+                        Text("GOAL")
+                            .font(.system(size: 9, weight: .semibold)).tracking(0.8)
                             .foregroundStyle(PulseColors.textMuted)
                     }
                 }
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(Array(payload.macroRows.enumerated()), id: \.offset) { _, row in
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 3) {
-                                Text(row.letter)
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .foregroundStyle(Color(hex: row.colorHex))
-                                Text(row.text)
-                                    .font(.system(size: 10, weight: .medium))
-                                    .monospacedDigit()
-                                    .foregroundStyle(PulseColors.textMuted)
-                                    .lineLimit(1)
-                            }
-                            GeometryReader { proxy in
-                                ZStack(alignment: .leading) {
-                                    Capsule().fill(PulseColors.elevated)
-                                    if row.goal > 0, row.value > 0 {
-                                        Capsule()
-                                            .fill(Color(hex: row.colorHex))
-                                            .frame(width: max(4, proxy.size.width * min(1, row.value / row.goal)))
-                                    }
-                                }
-                            }
-                            .frame(height: 4)
-                        }
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .lineLimit(1)
             }
-            .frame(maxHeight: .infinity)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         } else {
             WidgetEmptyMessage(systemImage: "fork.knife",
-                               message: rolledOver ? "No meals yet today"
+                               message: rolledOver || (active?.kcal == 0) ? "No meals yet today"
                                    : (payload == nil ? "Enable nutrition in PulseLoop" : "Open PulseLoop to sync"),
                                color: PulseColors.calories)
         }

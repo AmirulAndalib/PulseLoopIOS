@@ -109,10 +109,13 @@ struct ActivityTileView: View {
     }
 }
 
-// MARK: - Nutrition tile (calorie intake vs goal + macro bars)
+// MARK: - Nutrition tile (kcal headline + macro "fuel bar")
 
-/// Calorie-intake tile: eaten-vs-goal ring with remaining kcal in the center, macro mini-rows
-/// on the right. Only rendered when the nutrition feature is enabled (`summary.nutrition` set).
+/// Calorie-intake tile in the Sleep tile's visual language: a big kcal headline, a
+/// proportional macro "fuel bar" (protein/carbs/fat split, reusing the shared
+/// `SleepStageBar`), and a fixed-width EATEN/GOAL stat line. Nothing here can
+/// overflow — the bar drops labels on slivers and the stats are short fixed texts.
+/// Only rendered when the nutrition feature is enabled (`summary.nutrition` set).
 struct NutritionTileView: View {
     let totals: NutritionDayTotals
     let goals: GoalsSummary
@@ -120,64 +123,84 @@ struct NutritionTileView: View {
 
     private var goal: Int? { goals.intakeCalories }
     private var remaining: Double? { goal.map { Double($0) - totals.calories } }
-    private var ringColor: Color {
-        goal.map { NutritionFormat.progressColor(consumed: totals.calories, goal: Double($0), base: PulseColors.calories) }
-            ?? PulseColors.calories
+    private var headlineColor: Color {
+        goal.map { NutritionFormat.progressColor(consumed: totals.calories, goal: Double($0), base: PulseColors.textPrimary) }
+            ?? PulseColors.textPrimary
     }
 
-    var body: some View {
-        TodayTile(label: "Nutrition", color: PulseColors.calories, onTap: onTap) {
-            Spacer(minLength: 0)
-            HStack(spacing: 12) {
-                ProgressRingView(
-                    value: totals.calories,
-                    max: Double(goal ?? 0),
-                    size: 88,
-                    stroke: 9,
-                    color: ringColor
-                ) {
-                    VStack(spacing: 0) {
-                        Text(NutritionFormat.kcal(remaining.map { Swift.max(0, $0) } ?? totals.calories))
-                            .font(PulseFont.numberM)
-                            .monospacedDigit()
-                            .foregroundStyle(PulseColors.textPrimary)
-                        Text(centerLabel)
-                            .font(PulseFont.micro.weight(.semibold))
-                            .tracking(0.8)
-                            .foregroundStyle(PulseColors.textMuted)
-                    }
-                }
-                .padding(.leading, -2)
-                VStack(alignment: .leading, spacing: 6) {
-                    macroRow(.protein, value: totals.proteinG, goal: goals.intakeProteinG)
-                    macroRow(.carbs, value: totals.carbsG, goal: goals.intakeCarbsG)
-                    macroRow(.fat, value: totals.fatG, goal: goals.intakeFatG)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            Spacer(minLength: 0)
-        }
+    private var headlineValue: String {
+        NutritionFormat.kcal(remaining.map { Swift.max(0, $0) } ?? totals.calories)
     }
 
-    private var centerLabel: String {
+    private var headlineLabel: String {
         guard let remaining else { return "KCAL" }
         return remaining >= 0 ? "LEFT" : "OVER"
     }
 
-    private func macroRow(_ kind: MacroKind, value: Double, goal: Int?) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 3) {
-                Text(kind.letter)
-                    .font(PulseFont.micro.weight(.semibold))
-                    .foregroundStyle(kind.color)
-                // Consumed grams only — "/goal" truncated at tile width; the bar fill
-                // already conveys progress against the goal.
-                Text("\(NutritionFormat.grams(value))g")
-                    .font(PulseFont.micro.weight(.medium).monospacedDigit())
-                    .foregroundStyle(PulseColors.textMuted)
+    private var fuelSegments: [SleepStageSegment] {
+        [
+            SleepStageSegment(minutes: totals.proteinG, color: PulseColors.macroProtein, label: "P"),
+            SleepStageSegment(minutes: totals.carbsG, color: PulseColors.macroCarbs, label: "C"),
+            SleepStageSegment(minutes: totals.fatG, color: PulseColors.macroFat, label: "F"),
+        ].filter { $0.minutes > 0 }
+    }
+
+    var body: some View {
+        TodayTile(label: "Nutrition", color: PulseColors.calories, onTap: onTap) {
+            if totals.entryCount > 0 {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .firstTextBaseline, spacing: 5) {
+                        Text(headlineValue)
+                            .font(PulseFont.greeting)
+                            .monospacedDigit()
+                            .foregroundStyle(headlineColor)
+                            .minimumScaleFactor(0.7)
+                            .lineLimit(1)
+                        Text(headlineLabel)
+                            .font(PulseFont.micro.weight(.semibold)).tracking(1.0)
+                            .foregroundStyle(PulseColors.textMuted)
+                    }
+                    if fuelSegments.isEmpty {
+                        Capsule().fill(PulseColors.elevated).frame(height: 12)
+                    } else {
+                        SleepStageBar(segments: fuelSegments)
+                            .frame(height: 28)
+                    }
+                    // Single compact stat line — small enough that two number/label pairs
+                    // always fit the half-width tile without wrapping.
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        Text(NutritionFormat.kcal(totals.calories))
+                            .font(PulseFont.footnote.weight(.semibold))
+                            .monospacedDigit()
+                            .foregroundStyle(PulseColors.textPrimary)
+                        Text("EATEN")
+                            .font(PulseFont.nano).tracking(0.8)
+                            .foregroundStyle(PulseColors.calories)
+                        if let goal {
+                            Spacer(minLength: 4)
+                            Text(goal.formatted())
+                                .font(PulseFont.footnote.weight(.semibold))
+                                .monospacedDigit()
+                                .foregroundStyle(PulseColors.textSecondary)
+                            Text("GOAL")
+                                .font(PulseFont.nano).tracking(0.8)
+                                .foregroundStyle(PulseColors.textMuted)
+                        }
+                    }
                     .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Spacer(minLength: 0)
+                VStack(spacing: 6) {
+                    Image(systemName: "fork.knife")
+                        .font(PulseFont.title2.weight(.regular)).foregroundStyle(PulseColors.calories.opacity(0.7))
+                    Text("No meals logged")
+                        .font(PulseFont.footnote).foregroundStyle(PulseColors.textPrimary)
+                }
+                .frame(maxWidth: .infinity)
+                Spacer(minLength: 0)
             }
-            MacroMiniBar(value: value, goal: goal.map(Double.init), color: kind.color)
         }
     }
 }

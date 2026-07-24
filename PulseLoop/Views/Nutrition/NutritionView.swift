@@ -156,25 +156,27 @@ struct NutritionView: View {
         return Self.dayFormatter.string(from: selectedDay)
     }
 
+    /// Centered day-navigation cluster: chevrons hug the date so the control reads as one
+    /// unit near the center — the old edge-pinned left chevron sat under the back button.
     private var dayHeader: some View {
-        HStack {
+        HStack(spacing: 24) {
             dayChevron("chevron.left", enabled: true) { shiftDay(-1) }
-            Spacer()
             Text(dayTitle.uppercased())
                 .font(PulseFont.caption2)
                 .tracking(1.4)
                 .foregroundStyle(PulseColors.textMuted)
-            Spacer()
+                .frame(minWidth: 110)
             dayChevron("chevron.right", enabled: !isToday) { shiftDay(1) }
         }
+        .frame(maxWidth: .infinity)
     }
 
     private func dayChevron(_ symbol: String, enabled: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(PulseFont.bodyEmphasis)
+                .font(PulseFont.footnote.weight(.semibold))
                 .foregroundStyle(enabled ? PulseColors.textPrimary : PulseColors.textMuted.opacity(0.4))
-                .frame(width: 36, height: 36)
+                .frame(width: 32, height: 32)
                 .pulseGlass(Circle(), interactive: true)
         }
         .buttonStyle(.plain)
