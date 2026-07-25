@@ -32,13 +32,21 @@ final class CRPCoordinator: WearableCoordinator {
 
     /// Real-time vital capabilities backed by decoded group-1 replies (`g1/a.java` lines 664–712):
     /// HR (cmd 9), HRV (cmd 10), SpO2 (cmd 11), stress (cmd 14), temperature (cmd 32).
-    /// History sync and sleep are still deferred — their group-7 reply layouts aren't confirmed
-    /// against hardware yet. Steps push (`fdd1`), battery (`2a19`), find-device also confirmed.
-    /// Note: HR does NOT use the standard `2a37` characteristic on CRP rings — all vital results
-    /// come back as framed replies on `fdd3` group 1.
+    ///
+    /// The stored day timelines are decoded too: sleep (group-2/cmd-14) and the all-day "timing"
+    /// vital histories (HR/SpO2/HRV/stress, group-2/cmd 15/16/17/47) — see `CRPDecoder`. They are
+    /// pulled by `CRPSyncEngine.runStartup` and persisted through the event bridge; no capability
+    /// bit gates them, so none is claimed here.
+    ///
+    /// `manualSpo2` is claimed alongside `manualHeartRate`: both surface a "Measure now" button in
+    /// Vitals, the start/stop commands are confirmed (`b1/h.d`), and cmd-11 results now decode.
+    ///
+    /// Steps push (`fdd1`), battery (`2a19`), find-device also confirmed. Note: HR does NOT use the
+    /// standard `2a37` characteristic on CRP rings — all vital results come back as framed replies
+    /// on `fdd3` group 1.
     let capabilities: Set<WearableCapability> = [
         .steps, .realtimeSteps,
-        .heartRate, .realtimeHeartRate, .manualHeartRate,
+        .heartRate, .realtimeHeartRate, .manualHeartRate, .manualSpo2,
         .spo2, .stress, .hrv, .temperature,
         .battery,
         .findDevice,
