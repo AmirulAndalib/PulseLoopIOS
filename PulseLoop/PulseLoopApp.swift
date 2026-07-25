@@ -33,6 +33,8 @@ struct PulseLoopApp: App {
     private let healthSyncPublisher: HealthSyncPublisher
     /// Retained so the UNUserNotificationCenter delegate stays alive.
     private let notificationDelegate = CoachNotificationDelegate()
+    /// Retained so a completed background sync can fire the due check-in on fresh data.
+    private let notificationDataTrigger: CoachNotificationDataTrigger
 
     /// True when the app host is launched by the XCTest runner. Unit tests build their own
     /// in-memory stores and never touch the live BLE/notification stack, so the app host must
@@ -95,10 +97,18 @@ struct PulseLoopApp: App {
         self.widgetPublisher = widgetPublisher
         let healthSyncPublisher = HealthSyncPublisher(context: container.mainContext)
         self.healthSyncPublisher = healthSyncPublisher
+        let mainContext = container.mainContext
+        self.notificationDataTrigger = CoachNotificationDataTrigger {
+            CoachNotificationService(modelContext: mainContext, coordinator: coordinator)
+        }
 
         // Skip the live subsystems entirely under XCTest — the test target exercises these
         // components directly with their own fixtures; the app host just needs to launch cleanly.
         guard !runningTests else { return }
+
+        // Learn/refresh the resting-HR baseline that personalizes the auto HR zones (throttled
+        // internally, so this is a cheap no-op most launches).
+        RestingHRBaselineService.refreshIfStale(context: container.mainContext)
 
         // Start persistence + coordinator draining the bus; auto-reconnect happens when
         // CoreBluetooth reports poweredOn (see RingBLEClient.centralManagerDidUpdateState).
@@ -110,12 +120,13 @@ struct PulseLoopApp: App {
         diagnostics.start()
         widgetPublisher.start()
         healthSyncPublisher.start()
+        notificationDataTrigger.start()
 
         // Daily check-in notifications: route taps + register the background wake.
         UNUserNotificationCenter.current().delegate = notificationDelegate
         let ctx = container.mainContext
-        CoachNotificationScheduler.shared.register {
-            CoachNotificationService(modelContext: ctx, coordinator: coordinator)
+        CoachNotificationScheduler.shared.register { syncBudget in
+            CoachNotificationService(modelContext: ctx, coordinator: coordinator, syncWaitTimeout: syncBudget)
         }
     }
 
@@ -140,6 +151,10 @@ struct PulseLoopApp: App {
                 healthSyncPublisher.kick()
             }
             guard phase == .active else { return }
+            // Refresh the learned resting-HR baseline on foreground (6h-throttled no-op usually).
+            if !Self.isRunningUnitTests {
+                RestingHRBaselineService.refreshIfStale(context: container.mainContext)
+            }
             // Foreground reconnect: the OS can silently tear down the BLE link while suspended without
             // delivering a disconnect, leaving us "connected" but dead. On every resume, re-link the
             // last-known ring if it isn't actually connected. (Android foreground-reconnect parity.)
