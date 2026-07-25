@@ -69,8 +69,21 @@ enum CRPCommands {
     static let groupDevice = 1
     static let cmdSetUserInfo = 0     // b1/k.a: [height, weight, age, gender, strideLen]
     static let cmdSetTime = 1         // b1/e.b: [epochSecondsLE(4), tzByte]
-    static let cmdMeasureHR = 9       // b1/t.d: [enable] — start(1)/stop(0) continuous HR
-    static let cmdMeasureSpO2 = 11    // b1/h.d: [enable] — start(1)/stop(0) SpO2
+    static let cmdMeasureHR = 9        // b1/t.d:  q.c(1,9,  [enable]) — start(1)/stop(0) continuous HR
+    static let cmdMeasureHRV = 10      // b1/u.d:  q.c(1,10, [enable])
+    static let cmdMeasureSpO2 = 11     // b1/h.d:  q.c(1,11, [enable])
+    static let cmdMeasureStress = 14   // b1/h0.d: q.c(1,14, [enable])
+    static let cmdMeasureTemp = 32     // b1/i0.d: q.c(1,32, [enable])
+
+    // Group 1 — the ring answers a spot measure on the SAME cmd it was started with, so the
+    // result opcodes are aliases of the measure opcodes (vendor `g1/a.java` lines 664–712).
+    // These are deliberately NOT the `cmdEnableTiming*` values: a reply on 6/7/8/39/13 is the
+    // all-day config being acknowledged, not a reading.
+    static let cmdResultHR = cmdMeasureHR          // g1/a: onHeartRate(e1/f.b → payload[0])
+    static let cmdResultHRV = cmdMeasureHRV        // g1/a: onHrv(byte2int(payload[0]))
+    static let cmdResultSpO2 = cmdMeasureSpO2      // g1/a: onBloodOxygen(e1/d.b → payload[0])
+    static let cmdResultStress = cmdMeasureStress  // g1/a: onStressChange(byte2int(payload[0]))
+    static let cmdResultTemp = cmdMeasureTemp      // g1/a: onMeasureComplete(e1/m.a → (p[1]<<8|p[0])/10)
 
     // Group 1 — timing/enable controls (decompiled b1 package).
     // Disable: HR/HRV/SpO2/Stress use enable with interval=0. Temp uses a separate cmd.
@@ -81,23 +94,33 @@ enum CRPCommands {
     static let cmdEnableTimingTemp = 13     // b1/i0.c: q.c(1,13, [true])
     static let cmdDisableTimingTemp = 32    // b1/i0.d: q.c(1,32, [false])
 
-    // Group 7 — history queries + device info (decompiled b1/e0 + b1/r).
-    // NOTE: History queries are group 7, NOT group 2 (the b1/e0 builders use q.b(7,…) and q.c(7,…)).
+    // Group 7 — device info only (decompiled b1/r).
     static let groupDeviceInfo = 7
     static let cmdQueryDeviceInfo = 0       // b1/r.a: q.b(7,0)
     static let cmdQueryFirmwareVersion = 1  // b1/r.b: q.b(7,1)
     static let cmdQueryDeviceSN = 13        // b1/r.c: q.b(7,13)
-    static let cmdQueryHistoryHR = 4        // b1/e0.a: q.b(7,4)
-    static let cmdQueryHistoryStress = 5    // b1/e0.b: q.c(7,5, [interval])
-    static let cmdQueryHistoryHRV = 6       // b1/e0.e: q.c(7,6, [interval])
-    static let cmdQueryHistorySpO2 = 7      // b1/e0.f: q.b(7,7)
-    static let cmdQueryHistorySleep = 14    // b1/e0.c: q.c(2,14, [CRPHistoryDay])
-    static let cmdQueryHistoryTemp = 48     // b1/e0.d: q.b(7,48)
 
-    // Group 3 — power control.
+    // Group 2 — stored day history. The all-day "timing" vital timelines and sleep live HERE, not
+    // on group 7: the earlier group-7 opcodes were the device-info group and the ring answered every
+    // one of them empty (Android issue #29, fixed in `ea9855c`). Confirmed against zaggash's R11
+    // capture and the vendor `b1/{t,u,h,h0,e0}` builders.
+    static let groupHistory = 2
+    static let cmdQueryHistorySleep = 14    // b1/e0.c: q.c(2,14, [CRPHistoryDay])
+    static let cmdQueryTimingHR = 15        // b1/t.b:  q.c(2,15, [day, frameIndex])
+    static let cmdQueryTimingHRV = 16       // b1/u.b:  q.c(2,16, [day, frameIndex])
+    static let cmdQueryTimingSpO2 = 17      // b1/h.b:  q.c(2,17, [day, frameIndex])
+    static let cmdQueryTimingStress = 47    // b1/h0.b: q.c(2,47, [day, frameIndex])
+    static let cmdQueryHistoryTemp = 48     // b1/e0.d: q.b(2,48)
+    static let historyDayToday = 0          // CRPHistoryDay.TODAY; YESTERDAY = 1
+
+    // Group 3 — power control + wear state.
     static let groupPower = 3
     static let cmdFactoryReset = 0    // b1/l.v: q.b(3,0)
     static let cmdRestart = 1         // b1/l.w: q.b(3,1)
+    /// Autonomous push: `g1/a.java` decodes it as `onWearStateChange(payload[0] > 0)` — on-finger /
+    /// skin-contact detection. `[00]` = not worn, which is why an optical spot measure returns
+    /// nothing (Android issue #29 mis-diagnosis).
+    static let cmdWearState = 7
 
     // Group 9 — device actions.
     static let groupAction = 9
@@ -230,29 +253,38 @@ enum CRPProtocol {
         frame(group: CRPCommands.groupDevice, cmd: CRPCommands.cmdDisableTimingTemp)
     }
 
-    // MARK: - History query commands (group 7)
-    static func queryHistoryHeartRate() -> Data {
-        frame(group: CRPCommands.groupDeviceInfo, cmd: CRPCommands.cmdQueryHistoryHR)
+    // MARK: - History query commands (group 2)
+    // Each all-day "timing" vital is pulled a frame at a time: `[day, frameIndex]`. The reply echoes
+    // both back (see `CRPDecoder.decodeTimingHistory`), and `CRPSyncEngine` walks frameIndex up to the
+    // vital's terminal frame — the vendor's sequential `insertBleMessage(<query>.b(day, index + 1))`.
+
+    static func queryTimingHeartRateHistory(day: Int = CRPCommands.historyDayToday, frameIndex: Int = 0) -> Data {
+        frame(group: CRPCommands.groupHistory, cmd: CRPCommands.cmdQueryTimingHR,
+              payload: [UInt8(truncatingIfNeeded: day), UInt8(truncatingIfNeeded: frameIndex)])
     }
 
-    static func queryHistoryStress() -> Data {
-        frame(group: CRPCommands.groupDeviceInfo, cmd: CRPCommands.cmdQueryHistoryStress)
+    static func queryTimingHrvHistory(day: Int = CRPCommands.historyDayToday, frameIndex: Int = 0) -> Data {
+        frame(group: CRPCommands.groupHistory, cmd: CRPCommands.cmdQueryTimingHRV,
+              payload: [UInt8(truncatingIfNeeded: day), UInt8(truncatingIfNeeded: frameIndex)])
     }
 
-    static func queryHistoryHRV() -> Data {
-        frame(group: CRPCommands.groupDeviceInfo, cmd: CRPCommands.cmdQueryHistoryHRV)
+    static func queryTimingSpO2History(day: Int = CRPCommands.historyDayToday, frameIndex: Int = 0) -> Data {
+        frame(group: CRPCommands.groupHistory, cmd: CRPCommands.cmdQueryTimingSpO2,
+              payload: [UInt8(truncatingIfNeeded: day), UInt8(truncatingIfNeeded: frameIndex)])
     }
 
-    static func queryHistorySpO2() -> Data {
-        frame(group: CRPCommands.groupDeviceInfo, cmd: CRPCommands.cmdQueryHistorySpO2)
+    static func queryTimingStressHistory(day: Int = CRPCommands.historyDayToday, frameIndex: Int = 0) -> Data {
+        frame(group: CRPCommands.groupHistory, cmd: CRPCommands.cmdQueryTimingStress,
+              payload: [UInt8(truncatingIfNeeded: day), UInt8(truncatingIfNeeded: frameIndex)])
     }
 
-    static func queryHistorySleep(daysAgo: Int = 0) -> Data {
-        frame(group: CRPCommands.groupDeviceInfo, cmd: CRPCommands.cmdQueryHistorySleep, payload: [UInt8(truncatingIfNeeded: daysAgo)])
+    static func queryHistorySleep(daysAgo: Int = CRPCommands.historyDayToday) -> Data {
+        frame(group: CRPCommands.groupHistory, cmd: CRPCommands.cmdQueryHistorySleep,
+              payload: [UInt8(truncatingIfNeeded: daysAgo)])
     }
 
     static func queryHistoryTemp() -> Data {
-        frame(group: CRPCommands.groupDeviceInfo, cmd: CRPCommands.cmdQueryHistoryTemp)
+        frame(group: CRPCommands.groupHistory, cmd: CRPCommands.cmdQueryHistoryTemp)
     }
 
     // MARK: - Device info queries (group 7)

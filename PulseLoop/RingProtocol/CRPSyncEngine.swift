@@ -25,9 +25,17 @@ final class CRPSyncEngine: RingSyncEngine {
     private var profile: UserProfileValues?
 
     /// User-chosen all-day measurement config. Applied in the connect handshake and updatable
-    /// live via `applyMeasurementSettings`. `nil` ⇒ the user has never saved one, so the engine
-    /// skips the vital enable commands (the ring's own settings are the source of truth).
+    /// live via `applyMeasurementSettings`. `nil` ⇒ the user has never saved one; unlike QRing/YCBT
+    /// the CRP ring exposes no way to read back its own config, so a fresh R11 ships with every
+    /// all-day monitor OFF and never records anything to sync. We therefore fall back to
+    /// `MeasurementSettings.allOnDefault` (matching how `ColmiSyncEngine` force-enables on connect)
+    /// so the day timeline actually accumulates.
     private var measurementSettings: MeasurementSettings?
+
+    /// Frame follow-ups already requested this poll pass, keyed `cmd * 100 + frameIndex`, so a ring
+    /// that re-sends the same frame can't trigger a request storm. Cleared at the start of every
+    /// `queryAllHistory` pass so each sync re-pulls the full timeline.
+    private var requestedTimingFrames: Set<Int> = []
 
     init(writer: RingCommandWriter?) {
         self.writer = writer
@@ -40,22 +48,66 @@ final class CRPSyncEngine: RingSyncEngine {
         // Query firmware version so the UI doesn't show "Firmware: reading" (zaggash's report).
         send(CRPProtocol.queryFirmwareVersion())
         if let profile { send(userInfoFrame(profile)) }
-        // Enable vital monitoring only when the user has configured it (mirrors the vendor app's
-        // connect flow). Uses the user's polling interval for all vital types — the CRP protocol
-        // takes a single interval byte per enable command, and MeasurementSettings only exposes
-        // hrIntervalMinutes (no per-vital intervals), so we share it across the board.
-        if let settings = measurementSettings {
-            if settings.hrEnabled { send(CRPProtocol.enableTimingHeartRate(intervalMinutes: settings.hrIntervalMinutes)) }
-            if settings.hrvEnabled { send(CRPProtocol.enableTimingHRV(intervalMinutes: settings.hrIntervalMinutes)) }
-            if settings.stressEnabled { send(CRPProtocol.enableTimingStress(intervalMinutes: settings.hrIntervalMinutes)) }
-            if settings.spo2Enabled { send(CRPProtocol.enableTimingSpO2(intervalMinutes: settings.hrIntervalMinutes)) }
-            if settings.temperatureEnabled { send(CRPProtocol.enableTimingTemp()) }
+        // Enable all-day vital monitoring. A fresh ring has these OFF, so without this the ring
+        // stores no HR/SpO2/HRV/stress/temperature history and every history query below returns an
+        // empty reply (Android issue #29, zaggash's full-day capture). When the user has saved a
+        // config we honour it exactly (interval included); until then we fall back to allOnDefault.
+        applyTimingSettings(measurementSettings ?? .allOnDefault)
+        // Pull the day's stored all-day timeline. runStartup() IS the poll pass (the background sync
+        // and a foreground sync both re-invoke it), so this runs at the app's configured cadence; the
+        // ring samples at hrIntervalMinutes (above). The ring only emits history replies once asked.
+        queryAllHistory()
+    }
+
+    /// Request the stored all-day timelines the ring has accumulated: the group-2 "timing" vital
+    /// timelines (HR/SpO2/HRV/stress), temperature, and sleep. Vendor `u3/g1.java` fires the same set
+    /// on its sync pass. Each timing query pulls frame 0; the reply drives `handle` to pull the next
+    /// frame until the day is complete.
+    private func queryAllHistory() {
+        requestedTimingFrames.removeAll()
+        send(CRPProtocol.queryTimingHeartRateHistory())
+        send(CRPProtocol.queryTimingSpO2History())
+        send(CRPProtocol.queryTimingHrvHistory())
+        send(CRPProtocol.queryTimingStressHistory())
+        send(CRPProtocol.queryHistoryTemp())
+        send(CRPProtocol.queryHistorySleep())
+    }
+
+    /// The last frame index each timing vital emits before its day is complete (vendor terminal
+    /// index: HR/SpO2/stress finalize at frame 1 — two 144-slot frames; HRV at frame 3 — four
+    /// 72-slot frames). A reply below this index triggers a pull of the next frame.
+    private func terminalFrameIndex(cmd: Int) -> Int {
+        cmd == CRPCommands.cmdQueryTimingHRV ? 3 : 1
+    }
+
+    /// Build the next-frame query for a timing vital, or `nil` for a non-timing cmd.
+    private func timingQuery(cmd: Int, day: Int, frameIndex: Int) -> Data? {
+        switch cmd {
+        case CRPCommands.cmdQueryTimingHR:
+            return CRPProtocol.queryTimingHeartRateHistory(day: day, frameIndex: frameIndex)
+        case CRPCommands.cmdQueryTimingHRV:
+            return CRPProtocol.queryTimingHrvHistory(day: day, frameIndex: frameIndex)
+        case CRPCommands.cmdQueryTimingSpO2:
+            return CRPProtocol.queryTimingSpO2History(day: day, frameIndex: frameIndex)
+        case CRPCommands.cmdQueryTimingStress:
+            return CRPProtocol.queryTimingStressHistory(day: day, frameIndex: frameIndex)
+        default:
+            return nil
         }
     }
 
     func handle(_ event: RingDecodedEvent) {
-        // Steps/HR/battery are persisted by RingBLEClient via RingEventBridge; v1 keeps no engine-side
-        // state (no staged history pipeline to advance).
+        // Steps/HR/battery are persisted by RingBLEClient via RingEventBridge. The one piece of
+        // engine-side state is the all-day timeline's multi-frame pull: on each timing-history frame
+        // the ring returns, request the next frame until the vital's terminal index — the vendor's
+        // sequential `insertBleMessage(<query>.b(day, index + 1))` (`e1/{f,d,g,l}.java`). The samples
+        // themselves are decoded + persisted via the bridge; this only advances the cursor.
+        guard case let .timingHistoryFrame(cmd, day, frameIndex) = event else { return }
+        if frameIndex >= terminalFrameIndex(cmd: cmd) { return }
+        let nextIndex = frameIndex + 1
+        // Guard against a ring that re-sends the same frame spamming duplicate follow-ups.
+        guard requestedTimingFrames.insert(cmd * 100 + nextIndex).inserted else { return }
+        send(timingQuery(cmd: cmd, day: day, frameIndex: nextIndex))
     }
 
     // MARK: - Heart rate (standard 2a37 stream, started/stopped via the fdda command channel)
@@ -87,7 +139,14 @@ final class CRPSyncEngine: RingSyncEngine {
 
     func applyMeasurementSettings(_ settings: MeasurementSettings) {
         measurementSettings = settings
-        // Re-send vital enable/disable commands with the updated settings.
+        applyTimingSettings(settings)
+    }
+
+    /// Send the all-day enable/disable command for every vital. The CRP protocol takes a single
+    /// interval byte per enable, and `MeasurementSettings` carries only `hrIntervalMinutes` (no
+    /// per-vital cadence), so the HR interval is shared across the board. Disabled vitals are
+    /// explicitly turned off so a reconnect can't leave a previously-enabled monitor running.
+    private func applyTimingSettings(_ settings: MeasurementSettings) {
         if settings.hrEnabled { send(CRPProtocol.enableTimingHeartRate(intervalMinutes: settings.hrIntervalMinutes)) }
         else { send(CRPProtocol.disableTimingHeartRate()) }
         if settings.hrvEnabled { send(CRPProtocol.enableTimingHRV(intervalMinutes: settings.hrIntervalMinutes)) }
