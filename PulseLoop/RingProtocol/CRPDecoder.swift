@@ -6,6 +6,8 @@ import Foundation
 /// is complete. Mirrors the vendor's `g1/a.k()`. One assembler instance per connection — a fresh
 /// `CRPDriver` is built on every connect, so state always starts clean.
 final class CRPFrameAssembler {
+    nonisolated deinit {}   // skip the main-actor isolated-deinit hop (crashes on older sim runtimes)
+
     private var buffer: [UInt8] = []
     private var expected = 0
 
