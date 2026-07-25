@@ -41,6 +41,19 @@ struct RootAppView: View {
                     SeedData.clearAll(modelContext)
                     SeedData.seedDemo(modelContext, completeOnboarding: true)
                 }
+                // Test tooling: `-demoEstimatedCalories YES` reshapes the seeded recent days into
+                // what a phone-away ring-history sync produces (source `ring_history`, no device
+                // calories) so the on-device estimated-total path is visible in the UI.
+                if UserDefaults.standard.bool(forKey: "demoEstimatedCalories") {
+                    for offset in 0...2 {
+                        guard let day = Calendar.current.date(byAdding: .day, value: -offset, to: Date()),
+                              let row = MetricsRepository.activity(on: day, context: modelContext) else { continue }
+                        row.source = ActivityService.ringHistorySource
+                        DailyCalorieEstimator.recompute(day: day, context: modelContext)
+                    }
+                    try? modelContext.save()
+                    PulseDataChange.shared.notify()
+                }
                 // Test tooling: deep-link straight to a seeded workout's detail (route map).
                 if UserDefaults.standard.bool(forKey: "openWorkout"),
                    let session = ActivityRepository.sessions(context: modelContext).first(where: { $0.status == .finished && $0.useGps }) {
