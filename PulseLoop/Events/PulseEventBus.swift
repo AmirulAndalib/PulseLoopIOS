@@ -36,6 +36,11 @@ enum PulseEvent: Sendable {
     case fatigueSample(value: Int, timestamp: Date)
     case bloodSugarSample(mgdl: Double, timestamp: Date)
     /// Firmware version string parsed from the ring's status/firmware payload; persisted on the Device.
+    /// The ring reported whether it is on the finger (CRP group-3/cmd-7 `onWearStateChange`).
+    /// `RingSyncCoordinator` uses `worn == false` to fast-fail an in-flight spot measure: an optical
+    /// sensor with no skin contact cannot read, so idling out the full window only wastes the user's
+    /// time. Not persisted — it is a live condition, not data.
+    case wearState(worn: Bool)
     case firmwareVersion(String)
     /// Friendly history-sync progress for the product UI (e.g. "Syncing sleep…"). Never protocol terms.
     case syncProgress(stage: String)
@@ -344,7 +349,9 @@ final class EventPersistenceSubscriber {
                 // The rows are committed by now; the next sync re-checks against the database.
                 seenHistoryKeys.removeAll(keepingCapacity: true)
             }
-        case .heartRateComplete, .spo2Progress, .spo2Complete, .workoutStarted, .workoutPaused, .workoutResumed, .workoutFinished, .coachTrace:
+        // `.wearState` is a live condition the measurement flow reacts to, not data — nothing to store.
+        case .heartRateComplete, .spo2Progress, .spo2Complete, .workoutStarted, .workoutPaused,
+             .workoutResumed, .workoutFinished, .coachTrace, .wearState:
             break
         }
         // NB: no per-event save here — `scheduleFlush()` (called by `persist`) batches the save.
