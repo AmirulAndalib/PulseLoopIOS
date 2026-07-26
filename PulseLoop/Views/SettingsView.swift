@@ -137,6 +137,9 @@ struct SettingsView: View {
         rows.append(SettingsRowItem(icon: "heart.fill", tint: PulseColors.heartRate, title: "Apple Health") {
             path.append(AppRoute.settingsHealth)
         })
+        rows.append(SettingsRowItem(icon: "figure.run", tint: Color(hex: "#FC4C02"), title: "Strava") {
+            path.append(AppRoute.settingsStrava)
+        })
         rows.append(SettingsRowItem(icon: "lock.shield", tint: PulseColors.success, title: "Privacy & Data") {
             path.append(AppRoute.settingsPrivacyData)
         })

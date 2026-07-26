@@ -41,6 +41,11 @@ struct RootAppView: View {
                     SeedData.clearAll(modelContext)
                     SeedData.seedDemo(modelContext, completeOnboarding: true)
                 }
+                // Test tooling: fake a connected Strava account. Must run before anything touches
+                // StravaAuthService.shared (it reads the token store at init).
+                if UserDefaults.standard.bool(forKey: "demoStravaConnected") {
+                    StravaDemoState.apply()
+                }
                 // Test tooling: deep-link straight to a seeded workout's detail (route map).
                 if UserDefaults.standard.bool(forKey: "openWorkout"),
                    let session = ActivityRepository.sessions(context: modelContext).first(where: { $0.status == .finished && $0.useGps }) {
@@ -110,6 +115,8 @@ struct RootAppView: View {
                     CalibrationSettingsView()
                 case .settingsHealth:
                     AppleHealthSettingsView()
+                case .settingsStrava:
+                    StravaSettingsView()
                 case .settingsPrivacyData:
                     PrivacyDataSettingsView()
                 case .settingsAbout:
