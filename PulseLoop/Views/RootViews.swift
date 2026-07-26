@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 import UIKit
+import OSLog
 
 struct RootAppView: View {
     @Environment(\.modelContext) private var modelContext
@@ -41,6 +42,34 @@ struct RootAppView: View {
                     SeedData.clearAll(modelContext)
                     SeedData.seedDemo(modelContext, completeOnboarding: true)
                 }
+                #if DEBUG
+                // Test tooling: headless full-archive export/import against
+                // Documents/pulseloop-export.json, so the simulator smoke test can drive the
+                // feature without the share sheet / file picker.
+                let archiveLog = Logger(subsystem: "xyz.sakshambhutani.pulseloop2", category: "DataArchive")
+                if UserDefaults.standard.bool(forKey: "exportDataToDocuments"),
+                   let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+                    let url = docs.appendingPathComponent("pulseloop-export.json")
+                    do {
+                        let data = try await DataArchiveService.exportArchive(context: modelContext)
+                        try data.write(to: url, options: .atomic)
+                        archiveLog.info("exported \(data.count) bytes to \(url.path)")
+                    } catch {
+                        archiveLog.error("export failed — \(error)")
+                    }
+                }
+                if UserDefaults.standard.bool(forKey: "importDataFromDocuments"),
+                   let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+                    let url = docs.appendingPathComponent("pulseloop-export.json")
+                    do {
+                        let data = try Data(contentsOf: url)
+                        try await DataArchiveService.importArchive(data, context: modelContext)
+                        archiveLog.info("import from \(url.path) succeeded")
+                    } catch {
+                        archiveLog.error("import failed — \(error)")
+                    }
+                }
+                #endif
                 // Test tooling: deep-link straight to a seeded workout's detail (route map).
                 if UserDefaults.standard.bool(forKey: "openWorkout"),
                    let session = ActivityRepository.sessions(context: modelContext).first(where: { $0.status == .finished && $0.useGps }) {
