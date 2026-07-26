@@ -178,7 +178,7 @@ final class StravaUploadService {
         let gps = ActivityRepository.gpsPoints(sessionId: session.id, context: context)
             .filter(\.accepted)
             .sorted { $0.timestamp < $1.timestamp }
-            .map { (timestamp: $0.timestamp, latitude: $0.latitude, longitude: $0.longitude, altitude: $0.altitude) }
+            .map { StravaTrackFix(timestamp: $0.timestamp, latitude: $0.latitude, longitude: $0.longitude, altitude: $0.altitude) }
         let hrKind = MeasurementKind.heartRate.rawValue
         let hr = ActivityRepository.samples(sessionId: session.id, context: context)
             .filter { $0.kind == hrKind && $0.value > 0 }

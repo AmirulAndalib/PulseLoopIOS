@@ -1,5 +1,14 @@
 import Foundation
 
+/// One GPS fix handed to the TCX builder (a struct because SwiftLint's `large_tuple`
+/// bars labeled tuples beyond two members).
+struct StravaTrackFix {
+    let timestamp: Date
+    let latitude: Double
+    let longitude: Double
+    var altitude: Double?
+}
+
 /// Pure value-level TCX generator for Strava uploads. No SwiftData fetches — the caller passes
 /// pre-fetched arrays so the builder stays deterministic and hermetically testable.
 struct StravaTCXBuilder {
@@ -20,7 +29,7 @@ struct StravaTCXBuilder {
     static func build(
         session: ActivitySession,
         hrSamples: [(timestamp: Date, bpm: Int)],
-        gpsPoints: [(timestamp: Date, latitude: Double, longitude: Double, altitude: Double?)],
+        gpsPoints: [StravaTrackFix],
         pauseIntervals: [DateInterval]
     ) -> String? {
         let sortedHR = hrSamples.sorted { $0.timestamp < $1.timestamp }
@@ -104,7 +113,7 @@ struct StravaTCXBuilder {
     /// GPS mode: one trackpoint per GPS point; HR merged as a step function of the most
     /// recent sample at-or-before each point within the staleness window.
     private static func gpsTrackpoints(
-        gps: [(timestamp: Date, latitude: Double, longitude: Double, altitude: Double?)],
+        gps: [StravaTrackFix],
         hr: [(timestamp: Date, bpm: Int)],
         pauseIntervals: [DateInterval]
     ) -> [String] {

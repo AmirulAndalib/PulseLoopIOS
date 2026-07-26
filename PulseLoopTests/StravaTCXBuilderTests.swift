@@ -33,9 +33,9 @@ final class StravaTCXBuilderTests: XCTestCase {
         let session = try makeSession()
         let hr = [(timestamp: date(0), bpm: 100), (timestamp: date(25), bpm: 110)]
         let gps = [
-            (timestamp: date(10), latitude: 12.0, longitude: 77.0, altitude: Double?.none),
-            (timestamp: date(25), latitude: 12.0001, longitude: 77.0001, altitude: Double?.none),
-            (timestamp: date(40), latitude: 12.0002, longitude: 77.0002, altitude: Double?.none)
+            StravaTrackFix(timestamp: date(10), latitude: 12.0, longitude: 77.0, altitude: Double?.none),
+            StravaTrackFix(timestamp: date(25), latitude: 12.0001, longitude: 77.0001, altitude: Double?.none),
+            StravaTrackFix(timestamp: date(40), latitude: 12.0002, longitude: 77.0002, altitude: Double?.none)
         ]
         let tcx = try XCTUnwrap(StravaTCXBuilder.build(session: session, hrSamples: hr, gpsPoints: gps, pauseIntervals: []))
         let points = trackpointBlocks(tcx)
@@ -50,8 +50,8 @@ final class StravaTCXBuilderTests: XCTestCase {
         let session = try makeSession()
         let hr = [(timestamp: date(0), bpm: 95)]
         let gps = [
-            (timestamp: date(60), latitude: 12.0, longitude: 77.0, altitude: Double?.none),  // exactly 60 s: still fresh
-            (timestamp: date(61), latitude: 12.0001, longitude: 77.0001, altitude: Double?.none) // 61 s: stale
+            StravaTrackFix(timestamp: date(60), latitude: 12.0, longitude: 77.0, altitude: Double?.none),  // exactly 60 s: still fresh
+            StravaTrackFix(timestamp: date(61), latitude: 12.0001, longitude: 77.0001, altitude: Double?.none) // 61 s: stale
         ]
         let tcx = try XCTUnwrap(StravaTCXBuilder.build(session: session, hrSamples: hr, gpsPoints: gps, pauseIntervals: []))
         let points = trackpointBlocks(tcx)
@@ -64,8 +64,8 @@ final class StravaTCXBuilderTests: XCTestCase {
         let session = try makeSession()
         let hr = [(timestamp: date(30), bpm: 120)]
         let gps = [
-            (timestamp: date(10), latitude: 12.0, longitude: 77.0, altitude: Double?.none),
-            (timestamp: date(35), latitude: 12.0001, longitude: 77.0001, altitude: Double?.none)
+            StravaTrackFix(timestamp: date(10), latitude: 12.0, longitude: 77.0, altitude: Double?.none),
+            StravaTrackFix(timestamp: date(35), latitude: 12.0001, longitude: 77.0001, altitude: Double?.none)
         ]
         let tcx = try XCTUnwrap(StravaTCXBuilder.build(session: session, hrSamples: hr, gpsPoints: gps, pauseIntervals: []))
         let points = trackpointBlocks(tcx)
@@ -79,7 +79,7 @@ final class StravaTCXBuilderTests: XCTestCase {
         let session = try makeSession(type: "gym")
         let hr = [(timestamp: date(0), bpm: 90), (timestamp: date(120), bpm: 105)]
         // A single GPS fix is below the >=2 threshold, so this must still be indoor mode.
-        let gps = [(timestamp: date(5), latitude: 12.0, longitude: 77.0, altitude: Double?.none)]
+        let gps = [StravaTrackFix(timestamp: date(5), latitude: 12.0, longitude: 77.0, altitude: Double?.none)]
         let tcx = try XCTUnwrap(StravaTCXBuilder.build(session: session, hrSamples: hr, gpsPoints: gps, pauseIntervals: []))
         XCTAssertFalse(tcx.contains("<Position>"))
         XCTAssertFalse(tcx.contains("LatitudeDegrees"))
@@ -95,9 +95,9 @@ final class StravaTCXBuilderTests: XCTestCase {
     func testPauseIntervalDropsInteriorTrackpoints() throws {
         let session = try makeSession()
         let gps = [
-            (timestamp: date(0), latitude: 12.0, longitude: 77.0, altitude: Double?.none),
-            (timestamp: date(150), latitude: 12.0001, longitude: 77.0001, altitude: Double?.none), // inside pause
-            (timestamp: date(300), latitude: 12.0002, longitude: 77.0002, altitude: Double?.none)
+            StravaTrackFix(timestamp: date(0), latitude: 12.0, longitude: 77.0, altitude: Double?.none),
+            StravaTrackFix(timestamp: date(150), latitude: 12.0001, longitude: 77.0001, altitude: Double?.none), // inside pause
+            StravaTrackFix(timestamp: date(300), latitude: 12.0002, longitude: 77.0002, altitude: Double?.none)
         ]
         let pause = [DateInterval(start: date(100), end: date(200))]
         let tcx = try XCTUnwrap(StravaTCXBuilder.build(session: session, hrSamples: [], gpsPoints: gps, pauseIntervals: pause))
@@ -110,8 +110,8 @@ final class StravaTCXBuilderTests: XCTestCase {
     func testTotalTimeSecondsSubtractsPauseSeconds() throws {
         let session = try makeSession(duration: 600, pauseSeconds: 90)
         let gps = [
-            (timestamp: date(0), latitude: 12.0, longitude: 77.0, altitude: Double?.none),
-            (timestamp: date(600), latitude: 12.0001, longitude: 77.0001, altitude: Double?.none)
+            StravaTrackFix(timestamp: date(0), latitude: 12.0, longitude: 77.0, altitude: Double?.none),
+            StravaTrackFix(timestamp: date(600), latitude: 12.0001, longitude: 77.0001, altitude: Double?.none)
         ]
         let tcx = try XCTUnwrap(StravaTCXBuilder.build(session: session, hrSamples: [], gpsPoints: gps, pauseIntervals: []))
         XCTAssertTrue(tcx.contains("<TotalTimeSeconds>510.0</TotalTimeSeconds>"))
@@ -135,8 +135,8 @@ final class StravaTCXBuilderTests: XCTestCase {
     func testTimestampsAreUTCSecondPrecisionWithTrailingZ() throws {
         let session = try makeSession()
         let gps = [
-            (timestamp: date(0), latitude: 12.0, longitude: 77.0, altitude: 850.5 as Double?),
-            (timestamp: date(30), latitude: 12.0001, longitude: 77.0001, altitude: Double?.none)
+            StravaTrackFix(timestamp: date(0), latitude: 12.0, longitude: 77.0, altitude: 850.5 as Double?),
+            StravaTrackFix(timestamp: date(30), latitude: 12.0001, longitude: 77.0001, altitude: Double?.none)
         ]
         let tcx = try XCTUnwrap(StravaTCXBuilder.build(session: session, hrSamples: [], gpsPoints: gps, pauseIntervals: []))
         // Exact UTC literals — independent of the device timezone (t0 is 22:13:20Z; a
@@ -154,30 +154,37 @@ final class StravaTCXBuilderTests: XCTestCase {
         let session = try makeSession()
         XCTAssertNil(StravaTCXBuilder.build(session: session, hrSamples: [], gpsPoints: [], pauseIntervals: []))
         // One GPS fix and no HR is also unemittable (below the 2-point GPS threshold).
-        let lonePoint = [(timestamp: date(0), latitude: 12.0, longitude: 77.0, altitude: Double?.none)]
+        let lonePoint = [StravaTrackFix(timestamp: date(0), latitude: 12.0, longitude: 77.0, altitude: Double?.none)]
         XCTAssertNil(StravaTCXBuilder.build(session: session, hrSamples: [], gpsPoints: lonePoint, pauseIntervals: []))
     }
 
     // MARK: - Sport mapping
 
+    private struct MappingRow {
+        let type: String
+        let tcx: String
+        let sportType: String
+        let needsFix: Bool
+    }
+
     func testSportMappingTables() {
-        let expected: [(type: String, tcx: String, sportType: String, needsFix: Bool)] = [
-            (type: "walk", tcx: "Other", sportType: "Walk", needsFix: true),
-            (type: "run", tcx: "Running", sportType: "Run", needsFix: false),
-            (type: "cycle", tcx: "Biking", sportType: "Ride", needsFix: false),
-            (type: "gym", tcx: "Other", sportType: "WeightTraining", needsFix: true),
-            (type: "squash", tcx: "Other", sportType: "Squash", needsFix: true),
-            (type: "sport", tcx: "Other", sportType: "Workout", needsFix: true),
-            (type: "yoga", tcx: "Other", sportType: "Yoga", needsFix: true),
-            (type: "dance", tcx: "Other", sportType: "Workout", needsFix: true),
-            (type: "hike", tcx: "Other", sportType: "Hike", needsFix: true),
-            (type: "other", tcx: "Other", sportType: "Workout", needsFix: true),
+        let expected: [MappingRow] = [
+            MappingRow(type: "walk", tcx: "Other", sportType: "Walk", needsFix: true),
+            MappingRow(type: "run", tcx: "Running", sportType: "Run", needsFix: false),
+            MappingRow(type: "cycle", tcx: "Biking", sportType: "Ride", needsFix: false),
+            MappingRow(type: "gym", tcx: "Other", sportType: "WeightTraining", needsFix: true),
+            MappingRow(type: "squash", tcx: "Other", sportType: "Squash", needsFix: true),
+            MappingRow(type: "sport", tcx: "Other", sportType: "Workout", needsFix: true),
+            MappingRow(type: "yoga", tcx: "Other", sportType: "Yoga", needsFix: true),
+            MappingRow(type: "dance", tcx: "Other", sportType: "Workout", needsFix: true),
+            MappingRow(type: "hike", tcx: "Other", sportType: "Hike", needsFix: true),
+            MappingRow(type: "other", tcx: "Other", sportType: "Workout", needsFix: true),
             // Legacy aliases resolve through ActivityMeta before mapping.
-            (type: "outdoor_run", tcx: "Running", sportType: "Run", needsFix: false),
-            (type: "ride", tcx: "Biking", sportType: "Ride", needsFix: false),
-            (type: "cycling", tcx: "Biking", sportType: "Ride", needsFix: false),
-            (type: "strength", tcx: "Other", sportType: "WeightTraining", needsFix: true),
-            (type: "mystery_type", tcx: "Other", sportType: "Workout", needsFix: true)
+            MappingRow(type: "outdoor_run", tcx: "Running", sportType: "Run", needsFix: false),
+            MappingRow(type: "ride", tcx: "Biking", sportType: "Ride", needsFix: false),
+            MappingRow(type: "cycling", tcx: "Biking", sportType: "Ride", needsFix: false),
+            MappingRow(type: "strength", tcx: "Other", sportType: "WeightTraining", needsFix: true),
+            MappingRow(type: "mystery_type", tcx: "Other", sportType: "Workout", needsFix: true)
         ]
         for row in expected {
             XCTAssertEqual(StravaSportMapping.tcxSport(for: row.type), row.tcx, "tcxSport(\(row.type))")
