@@ -48,7 +48,7 @@ final class StravaAuthServiceTests: XCTestCase {
         ) async throws -> StravaActivitySummary {
             throw StravaError.invalidResponse
         }
-        func updateActivity(id: Int64, sportType: String, accessToken: String) async throws {}
+        func updateActivity(id: Int64, sportType: String, accessToken: String) async throws -> String? { sportType }
     }
 
     // MARK: - Helpers

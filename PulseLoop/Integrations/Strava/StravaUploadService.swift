@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 import SwiftData
 
 // MARK: - Token provider contract
@@ -39,6 +40,9 @@ final class StravaUploadService {
 
     /// Poll cadence for Strava's async upload processing. Internal so tests avoid real sleeps.
     @ObservationIgnored var pollNanoseconds: UInt64 = 2_000_000_000
+    /// Delay before re-asserting sport_type when Strava's post-processing overwrote it.
+    @ObservationIgnored var sportFixRetryNanoseconds: UInt64 = 3_000_000_000
+    private static let log = Logger(subsystem: "xyz.sakshambhutani.pulseloop2", category: "StravaSync")
     @ObservationIgnored var maxPollAttempts = 15
 
     init(
@@ -221,15 +225,26 @@ final class StravaUploadService {
     }
 
     /// TCX can only carry Running/Biking/Other, so most sports need a follow-up sport_type
-    /// update. Best-effort — the upload already succeeded, so a failure here is ignored.
+    /// update. Strava re-derives the type from the file shortly after processing, which can
+    /// overwrite an immediate update — so verify what Strava reports back and retry once after
+    /// a delay. Best-effort — the upload already succeeded, so a final failure is only logged.
     private func fixSportTypeIfNeeded(session: ActivitySession, activityId: String, accessToken: String) async {
         guard StravaSportMapping.needsSportTypeFix(for: session.type),
               let numericId = Int64(activityId) else { return }   // "duplicate" placeholder has no numeric id
-        try? await client.updateActivity(
-            id: numericId,
-            sportType: StravaSportMapping.sportType(for: session.type),
-            accessToken: accessToken
-        )
+        let desired = StravaSportMapping.sportType(for: session.type)
+        for attempt in 1...2 {
+            if attempt > 1 { try? await Task.sleep(nanoseconds: sportFixRetryNanoseconds) }
+            do {
+                let applied = try await client.updateActivity(id: numericId, sportType: desired, accessToken: accessToken)
+                if applied == desired || applied == nil {
+                    // nil = response unparseable; assume the 2xx meant it stuck.
+                    return
+                }
+                Self.log.notice("sport_type fix attempt \(attempt): Strava reports \(applied ?? "?", privacy: .public), wanted \(desired, privacy: .public)")
+            } catch {
+                Self.log.error("sport_type update failed (attempt \(attempt)): \(String(describing: error), privacy: .public)")
+            }
+        }
     }
 
     private func finalizeSuccess(session: ActivitySession, activityId: String, name: String, context: ModelContext) {

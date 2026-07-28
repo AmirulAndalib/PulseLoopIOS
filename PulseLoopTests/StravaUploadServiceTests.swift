@@ -100,8 +100,13 @@ nonisolated private final class StravaClientSpy: StravaAPIClient, @unchecked Sen
         return StravaActivitySummary(id: manualActivityId)
     }
 
-    func updateActivity(id: Int64, sportType: String, accessToken: String) async throws {
+    /// Consumed FIFO, one per `updateActivity`; empty = echo the requested sport back (applied).
+    var updateActivityResults: [String?] = []
+
+    func updateActivity(id: Int64, sportType: String, accessToken: String) async throws -> String? {
         updateActivityCalls.append((id: id, sportType: sportType))
+        if !updateActivityResults.isEmpty { return updateActivityResults.removeFirst() }
+        return sportType
     }
 }
 
@@ -205,6 +210,24 @@ final class StravaUploadServiceTests: XCTestCase {
         XCTAssertEqual(prefs.state.lastUploadSummary, call.name)
         XCTAssertNil(service.lastErrorBySession[session.id])
         XCTAssertTrue(service.uploadingSessionIds.isEmpty)
+    }
+
+    func testSportTypeFixRetriesWhenStravaOverwritesIt() async throws {
+        let context = try TestSupport.makeContext()
+        let session = try makeSession(context: context, type: "squash")
+        try insertHR(session, offsets: [10, 20], context: context)
+        let (client, provider, prefs) = (StravaClientSpy(), TokenProviderStub(), makePrefs())
+        let service = makeService(client: client, provider: provider, prefs: prefs)
+        service.sportFixRetryNanoseconds = 1
+        // Strava's post-upload processing can overwrite the first update (it reports the
+        // derived type back); the delayed second attempt sticks.
+        client.updateActivityResults = ["Run", "Squash"]
+
+        await service.upload(session: session, context: context)
+
+        XCTAssertEqual(client.updateActivityCalls.count, 2)
+        XCTAssertEqual(client.updateActivityCalls.last?.sportType, "Squash")
+        XCTAssertEqual(session.stravaActivityId, "42")
     }
 
     func testRunUploadSkipsSportTypeFix() async throws {

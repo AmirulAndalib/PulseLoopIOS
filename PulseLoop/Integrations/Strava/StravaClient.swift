@@ -123,7 +123,9 @@ nonisolated protocol StravaAPIClient: Sendable {
         trainer: Bool,
         accessToken: String
     ) async throws -> StravaActivitySummary
-    func updateActivity(id: Int64, sportType: String, accessToken: String) async throws
+    /// Returns the sport_type Strava reports after the update, when parseable.
+    @discardableResult
+    func updateActivity(id: Int64, sportType: String, accessToken: String) async throws -> String?
 }
 
 // MARK: - HTTP client
@@ -249,13 +251,16 @@ nonisolated struct StravaHTTPClient: StravaAPIClient {
         return try Self.decode(StravaActivitySummary.self, from: data)
     }
 
-    func updateActivity(id: Int64, sportType: String, accessToken: String) async throws {
+    @discardableResult
+    func updateActivity(id: Int64, sportType: String, accessToken: String) async throws -> String? {
         var request = URLRequest(url: Self.apiBase.appendingPathComponent("activities/\(id)"))
         request.httpMethod = "PUT"
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: ["sport_type": sportType])
-        _ = try await send(request)
+        let data = try await send(request)
+        let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        return json?["sport_type"] as? String
     }
 
     // MARK: Duplicate detection
