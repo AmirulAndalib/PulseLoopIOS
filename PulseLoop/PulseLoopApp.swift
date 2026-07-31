@@ -31,6 +31,8 @@ struct PulseLoopApp: App {
     private let widgetPublisher: WidgetSnapshotPublisher
     /// Retained so it keeps exporting newly-synced ring data into Apple Health.
     private let healthSyncPublisher: HealthSyncPublisher
+    /// Retained so it keeps pushing newly-finished workouts to Strava (automatic mode).
+    private let stravaSyncPublisher: StravaSyncPublisher
     /// Retained so the UNUserNotificationCenter delegate stays alive.
     private let notificationDelegate = CoachNotificationDelegate()
     /// Retained so a completed background sync can fire the due check-in on fresh data.
@@ -97,6 +99,8 @@ struct PulseLoopApp: App {
         self.widgetPublisher = widgetPublisher
         let healthSyncPublisher = HealthSyncPublisher(context: container.mainContext)
         self.healthSyncPublisher = healthSyncPublisher
+        let stravaSyncPublisher = StravaSyncPublisher(context: container.mainContext)
+        self.stravaSyncPublisher = stravaSyncPublisher
         let mainContext = container.mainContext
         self.notificationDataTrigger = CoachNotificationDataTrigger {
             CoachNotificationService(modelContext: mainContext, coordinator: coordinator)
@@ -120,6 +124,7 @@ struct PulseLoopApp: App {
         diagnostics.start()
         widgetPublisher.start()
         healthSyncPublisher.start()
+        stravaSyncPublisher.start()
         notificationDataTrigger.start()
 
         // Daily check-in notifications: route taps + register the background wake.
@@ -149,6 +154,7 @@ struct PulseLoopApp: App {
             if !Self.isRunningUnitTests {
                 widgetPublisher.publish(reason: .scenePhase)
                 healthSyncPublisher.kick()
+                stravaSyncPublisher.kick()
             }
             guard phase == .active else { return }
             // Refresh the learned resting-HR baseline on foreground (6h-throttled no-op usually).

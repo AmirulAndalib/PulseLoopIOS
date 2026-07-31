@@ -287,11 +287,13 @@ struct PrivacyDataSettingsView: View {
         // 1. All SwiftData model types (this removes UserProfile → RootViews returns to onboarding).
         SeedData.clearAll(modelContext)
 
-        // 2. Coach API keys from the Keychain (survive UserDefaults wipe, so delete explicitly).
+        // 2. Coach API keys and Strava OAuth tokens from the Keychain (survive UserDefaults wipe,
+        //    so delete explicitly).
         try? OpenAIKeychainStore().deleteKey()
         try? GeminiKeychainStore().deleteKey()
         try? OpenRouterKeychainStore().deleteKey()
         try? MiniMaxKeychainStore().deleteKey()
+        try? StravaKeychainTokenStore().delete()
 
         // 3. Wipe UserDefaults (metric prefs, coach settings, calibration, remembered ring, flags, …).
         if let bundleID = Bundle.main.bundleIdentifier {
@@ -304,6 +306,7 @@ struct PrivacyDataSettingsView: View {
         MetricPrefsStore.shared.settings = .default
         CoachSettingsStore.shared.settings = .default
         CalibrationStore.shared.settings = .default
+        StravaPrefsStore.shared.resetAll()
 
         // 5. RootViews reacts to the emptied `profiles` @Query and swaps MainTabView → OnboardingFlowView,
         //    tearing down this pushed page automatically — no manual navigation needed. In DEBUG the

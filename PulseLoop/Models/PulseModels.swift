@@ -590,6 +590,8 @@ final class ActivitySession {
     // How workout HR was captured: "stream" (continuous live HR stream) or "spot" (timer-driven
     // one-shot reads). Defaulted so the migration stays additive.
     var vitalsModeRaw: String = "spot"
+    // Strava activity id once uploaded; nil = never uploaded. Defaulted so the migration stays additive.
+    var stravaActivityId: String? = nil
 
     init(
         id: UUID = UUID(),

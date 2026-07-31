@@ -42,6 +42,11 @@ struct RootAppView: View {
                     SeedData.clearAll(modelContext)
                     SeedData.seedDemo(modelContext, completeOnboarding: true)
                 }
+                // Test tooling: fake a connected Strava account. Must run before anything touches
+                // StravaAuthService.shared (it reads the token store at init).
+                if UserDefaults.standard.bool(forKey: "demoStravaConnected") {
+                    StravaDemoState.apply()
+                }
                 #if DEBUG
                 // Test tooling: headless full-archive export/import against
                 // Documents/pulseloop-export.json, so the simulator smoke test can drive the
@@ -150,6 +155,8 @@ struct RootAppView: View {
                     CalibrationSettingsView()
                 case .settingsHealth:
                     AppleHealthSettingsView()
+                case .settingsStrava:
+                    StravaSettingsView()
                 case .settingsPrivacyData:
                     PrivacyDataSettingsView()
                 case .settingsAbout:
