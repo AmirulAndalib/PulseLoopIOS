@@ -160,6 +160,9 @@ final class EventPersistenceSubscriber {
     /// Persist any pending batched writes immediately. Call on app background/suspend so a sync that
     /// is mid-batch isn't lost.
     func flush() {
+        // A suspended mid-sync burst may never see `.syncProgress("done")` — settle any pending
+        // calorie-estimate recomputes before the save (no-op when nothing is dirty).
+        DailyCalorieEstimator.flushDirty(context: context)
         flushNow()
     }
 
@@ -282,6 +285,11 @@ final class EventPersistenceSubscriber {
                 entityId: row.id.uuidString,
                 payloadJSON: #"{"steps":\#(row.steps),"calories":\#(Int(row.calories)),"distance_m":\#(Int(row.distanceMeters))}"#
             ))
+            // Devices that report no calorie counter (send 0): keep today's on-device estimate
+            // tracking the live step ratchet. Throttled — cumulative packets can stream every second.
+            if calories <= 0 {
+                DailyCalorieEstimator.recomputeThrottled(day: timestamp, context: context)
+            }
         case let .activityBucket(timestamp, steps, distanceMeters):
             // Per-quarter-hour ring history: upserted by timestamp + the day total recomputed as the
             // sum of distinct buckets, so re-syncs are idempotent (no drift). Calories omitted.
@@ -344,6 +352,9 @@ final class EventPersistenceSubscriber {
                 }
                 // The rows are committed by now; the next sync re-checks against the database.
                 seenHistoryKeys.removeAll(keepingCapacity: true)
+                // Recompute calorie estimates for every day this sync touched, in one pass — the
+                // batched flush below saves the writes and fires the coalesced change signal.
+                DailyCalorieEstimator.flushDirty(context: context)
             }
         case .heartRateComplete, .spo2Progress, .spo2Complete, .workoutStarted, .workoutPaused, .workoutResumed, .workoutFinished, .coachTrace:
             break
