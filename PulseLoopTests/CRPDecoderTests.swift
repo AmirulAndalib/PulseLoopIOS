@@ -179,6 +179,39 @@ final class CRPDecoderTests: XCTestCase {
         XCTAssertEqual(driver.ingest(Data(full.suffix(3)), from: fdd3).count, 1)
     }
 
+    /// The driver instance survives auto-reconnect (`didDisconnectPeripheral` re-dials with a bare
+    /// `central.connect`; only `installDriver` rebuilds it), so both lifecycle hooks must drop a
+    /// partial frame. Otherwise the new link's first bytes finish the old link's frame.
+    func testDriverDiscardsAPartialFrameAcrossAReconnect() {
+        let full = CRPProtocol.frame(group: 1, cmd: 9, payload: [0x50]) // size 7
+        let resets: [(String, (CRPDriver) -> Void)] = [
+            ("connectionDidStart", { $0.connectionDidStart() }),
+            ("connectionDidEnd", { $0.connectionDidEnd() }),
+        ]
+        for (name, reset) in resets {
+            let driver = CRPDriver(writer: nil)
+            XCTAssertTrue(driver.ingest(Data(full.prefix(4)), from: fdd3).isEmpty)
+            reset(driver)
+            XCTAssertTrue(driver.ingest(Data(full.suffix(3)), from: fdd3).isEmpty,
+                          "\(name): the dropped link's tail must not complete a frame")
+            // The fresh link's own frames still decode.
+            XCTAssertEqual(driver.ingest(full, from: fdd3).count, 1, name)
+        }
+    }
+
+    /// `.connected` fires on the first notify characteristic to report `isNotifying`, and that is
+    /// `fdd1` for CRP — never `fdd3`, which carries every command reply. Since `.connected` is what
+    /// runs `runStartup`, the handshake would otherwise write ~26 frames into a channel we aren't
+    /// listening to yet, and a lost reply is indistinguishable from a slow one.
+    func testDriverHoldsConnectedUntilTheCommandReplyChannelIsLive() {
+        let driver = CRPDriver(writer: nil)
+        XCTAssertEqual(driver.requiredSubscriptionsBeforeConnected, [CRPUUIDs.cmdNotifyCBUUID])
+        // Must be a subset of notifyUUIDs or it could never be satisfied.
+        for uuid in driver.requiredSubscriptionsBeforeConnected {
+            XCTAssertTrue(driver.notifyUUIDs.contains(uuid), "\(uuid) is not a declared notify char")
+        }
+    }
+
     // MARK: - Wear state (group 3 / cmd 7)
 
     /// `g1/a.java` decodes group3/cmd7 as `onWearStateChange(payload[0] > 0)`. `[00]` = not worn,
@@ -413,6 +446,36 @@ final class CRPDecoderTests: XCTestCase {
         guard case .commandAck = CRPDecoder.decode(frame, from: fdd3).first else {
             return XCTFail("expected commandAck")
         }
+    }
+
+    /// Whatever this returns is shown verbatim in Settings, so a payload that isn't a version string
+    /// must ack rather than publish. `String(decoding:as:)` would have coerced both of these into
+    /// U+FFFD runs / control junk and presented them as a firmware version.
+    func testNonTextFirmwarePayloadsAreRejectedRatherThanCoerced() {
+        // Invalid UTF-8 (lone continuation bytes), and valid UTF-8 that is still binary junk.
+        for payload: [UInt8] in [[0xC3, 0x28, 0xA0, 0xFF], [0x01, 0x02, 0x03, 0x41]] {
+            let frame = CRPProtocol.frame(group: CRPCommands.groupPower,
+                                          cmd: CRPCommands.cmdQueryFirmwareVersion, payload: payload)
+            guard case .commandAck = CRPDecoder.decode(frame, from: fdd3).first else {
+                return XCTFail("expected commandAck for \(payload)")
+            }
+        }
+    }
+
+    // MARK: - Assembler lifecycle
+
+    /// Auto-reconnect re-uses the same `CRPDriver`, so a frame left half-assembled when the old link
+    /// dropped would be completed with bytes from the new one and decoded as genuine data. Without the
+    /// reset the two halves below splice into one plausible-looking frame.
+    func testAssemblerResetDiscardsAPartialFrameFromADroppedLink() {
+        let a = CRPFrameAssembler()
+        let full = CRPProtocol.frame(group: 1, cmd: 9, payload: [1, 2, 3, 4])   // size 10
+        XCTAssertNil(a.append(full.prefix(6)))       // link drops mid-frame
+        a.reset()                                     // connectionDidStart / connectionDidEnd
+        // The new link's leading bytes must not complete the old frame.
+        XCTAssertNil(a.append(full.suffix(4)), "continuation with no in-progress frame is noise")
+        // …and a whole frame after the reset still assembles normally.
+        XCTAssertEqual(a.append(full), full)
     }
 
     /// `CRPBloodOxygenType` defines exactly three values: 0 NOT_SUPPORT, 1 SLEEP_OXYGEN,

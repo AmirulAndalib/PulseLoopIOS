@@ -3,13 +3,26 @@ import Foundation
 
 /// Reassembles CRP command replies (`fdd3`) that span multiple BLE notifications. A logical frame
 /// starts with `FD DA …` and its declared total length (`CRPProtocol.frameLength`) tells us when it
-/// is complete. Mirrors the vendor's `g1/a.k()`. One assembler instance per connection — a fresh
-/// `CRPDriver` is built on every connect, so state always starts clean.
+/// is complete. Mirrors the vendor's `g1/a.k()`.
+///
+/// **Must be reset when a link comes up.** Auto-reconnect re-uses the same `CRPDriver` instance —
+/// `RingBLEClient.didDisconnectPeripheral` re-dials with a bare `central.connect`, and only
+/// `beginConnect`/`adoptRememberedIdentity` ever call `installDriver` — so a frame left half-assembled
+/// when the old link dropped would be completed with bytes from the new one and decoded as genuine.
+/// The group-2 history frames are long and multi-notification, so the spliced result would be a
+/// fabricated vital sample or sleep record, not an obvious parse failure. `CRPDriver.connectionDidStart`
+/// calls `reset()`, matching `LuckRingDriver`/`YCBTDriver`.
 final class CRPFrameAssembler {
     nonisolated deinit {}   // skip the main-actor isolated-deinit hop (crashes on older sim runtimes)
 
     private var buffer: [UInt8] = []
     private var expected = 0
+
+    /// Drop any partially-assembled frame. See the type doc — this is not optional bookkeeping.
+    func reset() {
+        buffer = []
+        expected = 0
+    }
 
     /// Feed one notification chunk. Returns the complete frame when the last chunk lands, else nil.
     func append(_ chunk: Data) -> Data? {
@@ -260,15 +273,30 @@ enum CRPDecoder {
     ///
     /// Returns `nil` when the payload holds nothing readable, so the caller acks it instead.
     /// Surfaced as `.firmware(version:)`, which the event bridge maps to `.firmwareVersion` — a
-    /// device-info event, *not* a connection-state one. That distinction matters: the query is part of
-    /// `CRPSyncEngine.runStartup`, which is also the ~30-minute background sync, so a reply that
-    /// bridged to "connected" would re-fire on every pass.
+    /// device-info event, *not* a connection-state one. That distinction matters: the query rides
+    /// `CRPSyncEngine`'s connect handshake, and a reply that bridged to "connected" would restamp the
+    /// device row as freshly connected.
+    ///
+    /// Validated rather than coerced, because whatever comes back is shown verbatim in Settings.
+    /// `String(decoding:as:)` cannot fail — it substitutes U+FFFD for invalid bytes — so a binary
+    /// payload would render as a row of replacement characters *presented as a firmware version*.
+    /// `String(bytes:encoding:)` returns nil instead, and the control-character check rejects the
+    /// binary payloads that happen to be valid UTF-8. A real version (`MOY-R1K3-2.1.6`) passes both.
     private static func decodeFirmwareVersion(_ payload: [UInt8]) -> [RingDecodedEvent]? {
-        // Trims NUL padding as well as whitespace: some firmwares pad the frame to a fixed width.
-        let version = String(decoding: payload, as: UTF8.self)
-            .trimmingCharacters(in: CharacterSet(charactersIn: " \0\t\r\n"))
-        if version.isEmpty { return nil }
-        return [.firmware(version: version)]
+        guard let raw = String(bytes: payload, encoding: .utf8) else { return nil }
+        // Trim only what firmwares actually pad with — NUL and whitespace. Deliberately narrower than
+        // the vendor's `trim { it <= ' ' }`: trimming *all* control bytes first would strip a binary
+        // payload's leading junk and let whatever printable byte followed through as a "version"
+        // (`01 02 03 41` → "A"). Padding comes off, then anything still holding a control byte is
+        // rejected outright rather than salvaged.
+        let trimmed = raw.trimmingCharacters(
+            in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "\0"))
+        )
+        if trimmed.isEmpty { return nil }
+        if trimmed.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) {
+            return nil
+        }
+        return [.firmware(version: trimmed)]
     }
 
     /// The ring's own answer to "do you have SpO2 hardware?" (`group 2 / cmd 37`). Vendor `g1/a.V0`

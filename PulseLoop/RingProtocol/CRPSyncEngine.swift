@@ -41,10 +41,20 @@ final class CRPSyncEngine: RingSyncEngine {
     /// platforms; it needs the read-back replies confirmed against hardware first.
     private var measurementSettings: MeasurementSettings?
 
-    /// Frame follow-ups already requested this poll pass, keyed `cmd * 100 + frameIndex`, so a ring
-    /// that re-sends the same frame can't trigger a request storm. Cleared at the start of every
-    /// `queryAllHistory` pass so each sync re-pulls the full timeline.
-    private var requestedTimingFrames: Set<Int> = []
+    /// One timing-history follow-up we've already asked for. Keyed on `day` as well as `cmd` —
+    /// today's queries are all `day 0`, but this engine already issues multi-day requests for sleep,
+    /// and a key without `day` would silently swallow day 1's frame-1 follow-up the moment the
+    /// timing vitals get the same backfill treatment.
+    private struct TimingFrameRequest: Hashable {
+        let cmd: Int
+        let day: Int
+        let frameIndex: Int
+    }
+
+    /// Frame follow-ups already requested this poll pass, so a ring that re-sends the same frame
+    /// can't trigger a request storm. Cleared at the start of every `queryAllHistory` pass so each
+    /// sync re-pulls the full timeline.
+    private var requestedTimingFrames: Set<TimingFrameRequest> = []
 
     init(writer: RingCommandWriter?) {
         self.writer = writer
@@ -54,14 +64,8 @@ final class CRPSyncEngine: RingSyncEngine {
         // Set the device clock first (matches the vendor's connect handshake), then user info so
         // the ring's step/calorie algorithm has real inputs.
         send(CRPProtocol.setTime())
-        // Query firmware version so the UI doesn't show "Firmware: reading" (zaggash's report).
-        // The 23-sends/0-replies in the 2026-07-25 capture were our fault, not the ring's: the old
-        // opcode was group 7 cmd 1, which the vendor SDK uses for `querySavedGomoreKey`, not
-        // firmware. The real query is group 3 cmd 3 (`b1/l.k` → `d1/b.queryFirmwareVersion`), and it
-        // answers with a UTF-8 string — `MOY-R1K3-2.1.6` on zaggash's R11.
-        send(CRPProtocol.queryFirmwareVersion())
         if let profile { send(userInfoFrame(profile)) }
-        sendConnectionReadBacks()
+        sendConnectionQueries()
         // Enable all-day vital monitoring. A fresh ring has these OFF, so without this the ring
         // stores no HR/SpO2/HRV/stress/temperature history and every history query below returns an
         // empty reply (Android issue #29, zaggash's full-day capture). When the user has saved a
@@ -73,24 +77,34 @@ final class CRPSyncEngine: RingSyncEngine {
         queryAllHistory()
     }
 
-    /// Whether this connection's read-backs have been sent. A fresh `CRPSyncEngine` is built per
-    /// connection (`RingBLEClient.installDriver` calls `driver.makeSyncEngine()` on connect), so
-    /// instance state gives "once per connection" for free.
-    private var readBacksSent = false
+    /// Whether the self-description queries have been sent on this engine instance.
+    ///
+    /// **"Once per connection" here means once per driver install, not once per GATT link.** Only
+    /// `beginConnect`/`adoptRememberedIdentity` call `RingBLEClient.installDriver` (which is what
+    /// builds this engine via `driver.makeSyncEngine()`); auto-reconnect re-dials with a bare
+    /// `central.connect` and keeps the same instance. So these queries survive a dropped link and are
+    /// not re-sent on the reconnect — which is the behaviour we want, since neither what the ring
+    /// supports nor the nights it holds change across a reconnect, and the `fdd2` channel is the
+    /// scarce resource. Don't "fix" this by resetting the flag in a lifecycle hook.
+    private var connectionQueriesSent = false
 
     /// Ask the ring to describe itself, once per connection.
     ///
+    /// Firmware version (`3/3`) answers with a UTF-8 string — `MOY-R1K3-2.1.6` on zaggash's R11. The
+    /// 23-sends/0-replies in the 2026-07-25 capture were our fault, not the ring's: the old opcode was
+    /// group 7 cmd 1, which the vendor SDK uses for `querySavedGomoreKey` (`b1/r.d`), not firmware.
     /// `querySupportSpO2Type` answers NOT_SUPPORT / SLEEP_OXYGEN / TIMING_OXYGEN; the timing-state
     /// queries report each all-day monitor's configured interval (0 = off). Together they are the
     /// evidence base for whether a silent history query means "the monitor is off" or "this ring
-    /// lacks the sensor" — stress (`2/47`), temperature (`2/22`) and firmware (formerly `7/1`) all
-    /// went unanswered on zaggash's ring, and these replies are how we tell those apart next capture.
+    /// lacks the sensor" — stress (`2/47`) and temperature (`2/22`) both went unanswered on zaggash's
+    /// ring, and these replies are how we tell those apart next capture.
     ///
-    /// Deliberately **not** part of the poll pass. `runStartup` doubles as the background re-sync,
-    /// but what a ring supports cannot change between syncs. Re-asking would add six writes to every
-    /// pass on a ring that funnels the handshake, timing config, history pull *and* on-demand
-    /// measures through the single `fdd2` channel — and a spot SpO2 needs ~48 s of that channel to
-    /// return a reading.
+    /// Deliberately **not** part of the poll pass. `runStartup` doubles as the background re-sync, but
+    /// neither a firmware string nor a sensor roster can change between syncs. Re-asking would add
+    /// seven writes to every pass on a ring that funnels the handshake, timing config, history pull
+    /// *and* on-demand measures through the single `fdd2` channel — and a spot SpO2 needs ~48 s of
+    /// that channel to return a reading. (Firmware used to be sent unconditionally here, which
+    /// contradicted that argument on the very next line.)
     ///
     /// **Call order matters: this must run BEFORE `applyTimingSettings`.** The state queries report
     /// each monitor's *current* interval, and `applyTimingSettings` force-enables everything moments
@@ -98,9 +112,10 @@ final class CRPSyncEngine: RingSyncEngine {
     /// nothing — the whole point is to learn whether stress and temperature were silent because their
     /// monitor was off. `CRPSyncEngineTests` pins the ordering; if that assertion ever fails, fix the
     /// call site rather than the expectation.
-    private func sendConnectionReadBacks() {
-        if readBacksSent { return }
-        readBacksSent = true
+    private func sendConnectionQueries() {
+        if connectionQueriesSent { return }
+        connectionQueriesSent = true
+        send(CRPProtocol.queryFirmwareVersion())
         send(CRPProtocol.querySupportSpO2Type())
         send(CRPProtocol.queryTimingHeartRateState())
         send(CRPProtocol.queryTimingHrvState())
@@ -124,8 +139,8 @@ final class CRPSyncEngine: RingSyncEngine {
         sendSleepBackfill()
     }
 
-    /// Whether this connection has already backfilled older nights. Same "fresh engine per
-    /// connection" trick as `readBacksSent`.
+    /// Whether older nights have already been backfilled on this engine instance. Same
+    /// once-per-driver-install scope as `connectionQueriesSent` — see there.
     private var sleepBackfillSent = false
 
     /// Pull the nights *before* today, once per connection.
@@ -145,7 +160,11 @@ final class CRPSyncEngine: RingSyncEngine {
     private func sendSleepBackfill() {
         if sleepBackfillSent { return }
         sleepBackfillSent = true
-        for daysAgo in 1...crpSleepBackfillDays { send(CRPProtocol.queryHistorySleep(daysAgo: daysAgo)) }
+        // Half-open on purpose: `crpSleepBackfillDays` is documented as a knob to raise or lower, and
+        // `1...0` would trap at runtime if it were ever turned down to "today only".
+        for daysAgo in 1..<(crpSleepBackfillDays + 1) {
+            send(CRPProtocol.queryHistorySleep(daysAgo: daysAgo))
+        }
     }
 
     /// The last frame index each timing vital emits before its day is complete (vendor terminal
@@ -181,7 +200,8 @@ final class CRPSyncEngine: RingSyncEngine {
         if frameIndex >= terminalFrameIndex(cmd: cmd) { return }
         let nextIndex = frameIndex + 1
         // Guard against a ring that re-sends the same frame spamming duplicate follow-ups.
-        guard requestedTimingFrames.insert(cmd * 100 + nextIndex).inserted else { return }
+        let request = TimingFrameRequest(cmd: cmd, day: day, frameIndex: nextIndex)
+        guard requestedTimingFrames.insert(request).inserted else { return }
         send(timingQuery(cmd: cmd, day: day, frameIndex: nextIndex))
     }
 

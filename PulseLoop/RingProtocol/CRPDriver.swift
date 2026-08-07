@@ -13,9 +13,10 @@ import Foundation
 /// (all v1 commands fit one ≤20-byte packet, so no chunking is needed), so `frame(_:)` returns its input.
 ///
 /// **Inbound.** `fdd3` replies may span several notifications and are reassembled by
-/// `CRPFrameAssembler`; `fdd1`/`2a37` pushes are self-contained. A fresh driver is built per connect
-/// (`RingBLEClient.installDriver` calls `coordinator.makeDriver` every time), so the assembler starts
-/// clean without an explicit reset hook (matches `JringDriver`/`LuckRingDriver`).
+/// `CRPFrameAssembler`; `fdd1`/`2a37` pushes are self-contained. A driver is **not** rebuilt on every
+/// link: only `beginConnect`/`adoptRememberedIdentity` call `RingBLEClient.installDriver`, while
+/// auto-reconnect re-dials with a bare `central.connect`. So the assembler is reset in
+/// `connectionDidStart()` rather than relying on a fresh instance (matches `LuckRingDriver`/`YCBTDriver`).
 @MainActor
 final class CRPDriver: WearableDriver {
     nonisolated deinit {}   // skip the main-actor isolated-deinit hop (crashes on older sim runtimes)
@@ -38,6 +39,29 @@ final class CRPDriver: WearableDriver {
     ]
     let batteryServiceUUID: CBUUID? = CRPUUIDs.batteryServiceCBUUID
     let batteryCharUUID: CBUUID? = CRPUUIDs.batteryLevelCBUUID
+
+    /// Hold `.connected` until `fdd3` is live. Without this the connection counts as up on whichever
+    /// notify characteristic reports `isNotifying` first — for CRP that is `fdd1` (the steps push),
+    /// never `fdd3`, which carries *every* command reply. `.connected` is what runs `runStartup`, so a
+    /// handshake begun too early would write the clock, firmware query, read-backs, timing config and
+    /// the whole history pull into a channel we aren't listening to yet, and each lost reply is
+    /// indistinguishable from a slow one. Only `fdd3` is required: `fdd1`/`fdd6`/`2a37` carry no reply
+    /// the handshake waits on, so gating on them would only delay the connect.
+    let requiredSubscriptionsBeforeConnected: [CBUUID] = [CRPUUIDs.cmdNotifyCBUUID]
+
+    // MARK: Lifecycle
+
+    /// Auto-reconnect re-uses this driver instance (see the type doc), so a frame half-assembled when
+    /// the old link dropped would be completed with bytes from the new one and decoded as real data.
+    func connectionDidStart() {
+        assembler.reset()
+    }
+
+    /// Symmetric with `connectionDidStart`, and the one point that cannot race the reconnect: clear
+    /// the partial frame the moment the link goes away rather than trusting the next connect to run.
+    func connectionDidEnd() {
+        assembler.reset()
+    }
 
     // MARK: Framing — the protocol/engine already build full CRP frames.
     func frame(_ command: Data) -> Data { command }

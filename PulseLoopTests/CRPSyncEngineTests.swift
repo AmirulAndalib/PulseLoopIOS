@@ -15,9 +15,9 @@ final class CRPSyncEngineTests: XCTestCase {
         func payloadByte(_ frame: Int, _ index: Int) -> Int { Int([UInt8](sent[frame])[index]) }
     }
 
-    /// The connect handshake's leading commands, in order: set-time, firmware query, then user info
-    /// once a profile exists. Everything after that is the read-backs, the all-day timing config and
-    /// the history pull, covered by their own tests below.
+    /// The connect handshake leads with set-time, then user info once a profile exists, then the
+    /// self-description queries. Everything after that is the all-day timing config and the history
+    /// pull, covered by their own tests below.
     func testRunStartupSendsSetTimeThenUserInfoOnceAProfileIsStored() {
         let w = FakeWriter()
         let engine = CRPSyncEngine(writer: w)
@@ -29,7 +29,7 @@ final class CRPSyncEngineTests: XCTestCase {
         w.sent.removeAll()
         engine.setUserProfile(UserProfileValues(metric: true, sex: "male", age: 30, heightCm: 180, weightKg: 75))
         engine.runStartup()
-        XCTAssertEqual(Array(w.opcodes.prefix(3)), [[1, 1], [3, 3], [1, 0]])
+        XCTAssertEqual(Array(w.opcodes.prefix(2)), [[1, 1], [1, 0]])
     }
 
     /// Nothing may target group 7 any more: every `b1/r` builder is a Gomore call, and the R11
@@ -62,14 +62,18 @@ final class CRPSyncEngineTests: XCTestCase {
                           "read-backs must be asked before we impose a config")
     }
 
-    /// What a ring supports cannot change between syncs, and `runStartup` is also the background
-    /// re-sync — so re-asking would add six writes to every pass on a single-channel ring.
-    func testReadBacksAreSentOncePerConnectionNotPerPass() {
+    /// Neither a firmware string nor a sensor roster changes between syncs, and `runStartup` is also
+    /// the background re-sync — so re-asking would add seven writes to every pass on a single-channel
+    /// ring. Firmware is included: it used to be sent unconditionally, contradicting that argument.
+    func testConnectionQueriesAreSentOncePerConnectionNotPerPass() {
         let w = FakeWriter()
         let engine = CRPSyncEngine(writer: w)
         engine.runStartup()
+        XCTAssertTrue(w.opcodes.contains([3, 3]), "firmware asked on the first pass")
+
         w.sent.removeAll()
         engine.runStartup()
+        XCTAssertFalse(w.opcodes.contains([3, 3]), "firmware must not repeat every pass")
         for cmd in [37, 6, 7, 8, 45, 21] {
             XCTAssertFalse(w.opcodes.contains([2, cmd]), "read-back group2/cmd\(cmd) must not repeat")
         }
@@ -227,6 +231,21 @@ final class CRPSyncEngineTests: XCTestCase {
         w.sent.removeAll()
         engine.handle(.timingHistoryFrame(cmd: 15, day: 0, frameIndex: 0))
         XCTAssertEqual(w.sent.count, 1, "a new pass may re-request frame 1")
+    }
+
+    /// The follow-up guard keys on `day` too. Today every timing query is `day 0`, but this engine
+    /// already issues multi-day requests for sleep, so a key without `day` would silently swallow
+    /// day 1's frame-1 follow-up the moment the timing vitals get the same backfill treatment.
+    func testFollowUpGuardDistinguishesDays() {
+        let w = FakeWriter()
+        let engine = CRPSyncEngine(writer: w)
+        engine.runStartup()
+        w.sent.removeAll()
+        engine.handle(.timingHistoryFrame(cmd: 15, day: 0, frameIndex: 0))
+        engine.handle(.timingHistoryFrame(cmd: 15, day: 1, frameIndex: 0))
+        XCTAssertEqual(w.sent.count, 2, "a different day is a different follow-up")
+        XCTAssertEqual(w.payloadByte(0, 6), 0)   // day 0
+        XCTAssertEqual(w.payloadByte(1, 6), 1)   // day 1
     }
 
     /// A non-timing event must not be mistaken for a history cursor.
