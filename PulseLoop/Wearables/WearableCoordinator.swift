@@ -15,6 +15,17 @@ enum RingDeviceType: String, Codable, CaseIterable, Sendable {
     /// LuckRing / TK18 family (the "K6" vendor SDK, company ID `0xFF64`). Sold under simsonlab and other
     /// brands; TK18 is the hardware-tested unit. See `LuckRingCoordinator`.
     case luckRing
+    /// Generic YCBT / SmartHealth rings that are **not** part of the Colmi line and carry no TK5
+    /// identity — the LittleMeatball R10M is the hardware-validated unit. Same wire protocol as `.tk5`
+    /// and `.colmiSmartHealth` (so it shares the whole `YCBT*` stack), kept a separate family because its
+    /// capability set, product art and firmware quirks are its own. See `YCBTCoordinator`.
+    case ycbt
+    /// RWfit rings (the `com.rw.revivalfit` vendor app; often rebranded — the known unit was sold as
+    /// a "Colmi" but shares nothing with the Colmi protocol). One family covers both of the vendor's
+    /// wire framings — legacy `0x7E` and JieLi `0xAB` — because they share the `A00A` GATT and the
+    /// advertisement cannot tell them apart; the driver picks the framing after service discovery.
+    /// See `RWfitCoordinator`.
+    case rwfit
     /// CRP ("crrepa"/CRPsmart) family — the proprietary `fdda`-profile rings whose official app is
     /// Moyoung "Da Rings" (`com.moyoung.ring`). Notably the CRP-firmware Colmi R11: it advertises the
     /// generic "SMART_RING" name with no service UUID, so it's classified jring at scan and only reveals
@@ -30,6 +41,8 @@ enum RingDeviceType: String, Codable, CaseIterable, Sendable {
         case .tk5: return "TK5 ring"
         case .colmiSmartHealth: return "Colmi ring (SmartHealth)"
         case .luckRing: return "LuckRing"
+        case .ycbt: return "YCBT / SmartHealth ring"
+        case .rwfit: return "RWfit ring"
         case .crp: return "Colmi / Moyoung ring (CRP)"
         }
     }

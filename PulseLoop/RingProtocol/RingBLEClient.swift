@@ -38,15 +38,26 @@ final class RingBLEClient: NSObject {
     ///     `TK5x`-named LuckRing sibling. ("TK18" does not hit the `TK5` prefix, so today it is moot.)
     static let coordinators: [WearableCoordinator.Type] = [
         JringCoordinator.self,
+        // Ahead of both Colmi coordinators: `ColmiSmartHealthCoordinator`'s `<MODEL> <4 hex>` name
+        // convention accepts "R10M FCF4", so an R10M carrying the shared `1078` company ID would
+        // otherwise be claimed as a Colmi and handed the Colmi baseline. This coordinator's own matcher
+        // is narrow enough (see there) that leading the Colmis costs them nothing.
+        YCBTCoordinator.self,
         ColmiSmartHealthCoordinator.self,
         ColmiCoordinator.self,
         LuckRingCoordinator.self,
         TK5Coordinator.self,
-        // CRP matches only its family-exclusive `fdda` service, which the CRP R11 doesn't advertise
-        // pre-connect — so its position is not load-bearing and it never auto-claims at scan. It's
-        // reached by an explicit "Colmi R11 (Da Rings app)" carousel pick (`preferredFamily = .crp`),
-        // iOS having no post-connect driver re-route like the Android app's.
+        // The last two are the zero-risk slots: each matches only family-exclusive signals that no
+        // coordinator above claims, neither matches any name, and their signals are disjoint — so
+        // neither can shadow or be shadowed, and their order relative to each other is free.
+        //
+        // CRP matches the `fdda` service — which the CRP R11 doesn't even advertise pre-connect, so
+        // it never auto-claims at scan. It's reached by an explicit "Colmi R11 (Da Rings app)"
+        // carousel pick (`preferredFamily = .crp`), iOS having no post-connect re-route like Android's.
         CRPCoordinator.self,
+        // Last is RWfit's documented slot, pinned by `testRWfitIsRegisteredLast`: the `A00A` service
+        // and company IDs `0x05D6`/`0x06D6`, no name matching at all.
+        RWfitCoordinator.self,
     ]
 
     /// Which coordinator serves a connection. Pure, so the pairing rules are testable without a
@@ -111,6 +122,10 @@ final class RingBLEClient: NSObject {
     /// Optional second write characteristic for big-data requests (Colmi `de5bf72a`).
     private var commandChar: CBCharacteristic?
     private var notifyChars: [CBUUID: CBCharacteristic] = [:]
+    /// Notify characteristics that have actually reported `isNotifying` on *this* link. Reset per
+    /// connection: a driver survives a reconnect, so a set carried over would let the next link claim
+    /// readiness on subscriptions that belong to the dead one.
+    private var subscribedNotifyUUIDs: Set<CBUUID> = []
     private var batteryCharacteristic: CBCharacteristic?
 
     // MARK: Active driver / engine (selected per connection)
@@ -302,6 +317,19 @@ final class RingBLEClient: NSObject {
         pumpWrites()
     }
 
+    /// Put commands at the **head** of the write queue, preserving their order relative to each other.
+    ///
+    /// Only for `WearableDriver.immediatePostSubscriptionCommands()`. Everything else must append: the
+    /// queue is what makes writes serial and ordered, and a caller jumping it would reorder a protocol
+    /// that depends on its own sequence.
+    private func prependWrites(_ commands: [Data]) {
+        let framed = commands.map { command -> (data: Data, useCommandChannel: Bool) in
+            let framed = activeDriver?.frame(command) ?? command
+            return (data: framed, useCommandChannel: activeDriver?.usesCommandChannel(for: framed) ?? false)
+        }
+        writeQueue.insert(contentsOf: framed, at: 0)
+    }
+
     func readBattery() {
         guard let peripheral, let batteryCharacteristic else { return }
         peripheral.readValue(for: batteryCharacteristic)
@@ -363,6 +391,7 @@ final class RingBLEClient: NSObject {
             central.cancelPeripheralConnection(old)
         }
         writeChar = nil; commandChar = nil; notifyChars = [:]; batteryCharacteristic = nil
+        subscribedNotifyUUIDs = []
         writeInFlight = false; writeQueue = []
         peripheral = target
         target.delegate = self
@@ -737,6 +766,7 @@ extension RingBLEClient: CBCentralManagerDelegate {
             writeChar = nil
             commandChar = nil
             notifyChars = [:]
+            subscribedNotifyUUIDs = []
             batteryCharacteristic = nil
             writeInFlight = false
             writeQueue = []
@@ -766,6 +796,9 @@ extension RingBLEClient: CBPeripheralDelegate {
     nonisolated func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         MainActor.assumeIsolated {
             guard let driver = activeDriver else { return }
+            // Full service list first, before any characteristic I/O: the RWfit driver picks its wire
+            // framing off which sibling services exist (see `WearableDriver.servicesDiscovered`).
+            driver.servicesDiscovered((peripheral.services ?? []).map(\.uuid))
             for service in peripheral.services ?? [] {
                 if driver.serviceUUIDs.contains(service.uuid) {
                     var chars = driver.notifyUUIDs
@@ -822,8 +855,12 @@ extension RingBLEClient: CBPeripheralDelegate {
             guard let driver = activeDriver,
                   driver.notifyUUIDs.contains(characteristic.uuid),
                   characteristic.isNotifying else { return }
-            // Fully connected once at least one notify char is live. (Multi-notify devices may fire
-            // this twice; guard against re-running startup.)
+            subscribedNotifyUUIDs.insert(characteristic.uuid)
+            // Fully connected once every channel the driver declared *required* is live — or, for a
+            // driver that declares none, on the first one, which is the historical behaviour. (Multi-notify
+            // devices fire this once per channel; guard against re-running startup.)
+            let required = driver.requiredSubscriptionsBeforeConnected
+            guard required.allSatisfy(subscribedNotifyUUIDs.contains) else { return }
             guard state != .connected else { return }
             state = .connected
             cancelConnectTimeout()   // the attempt landed
@@ -849,6 +886,10 @@ extension RingBLEClient: CBPeripheralDelegate {
             startKeepalive()
             startWatchdog()
             readBattery()
+            // Order on the wire: the driver's own handshake, then the engine's startup sequence.
+            // `onConnected` is what queues the latter, so the prepend has to happen first — after it, the
+            // engine's commands are already in the queue and "head" would mean jumping them too.
+            prependWrites(driver.immediatePostSubscriptionCommands())
             onConnected?()
             pumpWrites()
         }

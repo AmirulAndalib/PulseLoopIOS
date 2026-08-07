@@ -198,7 +198,10 @@ final class RingSyncCoordinator {
     /// safety timeout so a dropped completion signal can't leave the progress bar stuck on.
     private(set) var syncStage: String?
     /// Whether a ring data sync is in flight — drives the thin progress bar under the header.
-    var isSyncing: Bool { syncStage != nil }
+    /// Stored and mutated only on start/end transitions (not derived from `syncStage`): a computed
+    /// `syncStage != nil` would register observers on `syncStage` itself, invalidating the whole
+    /// tab tree on every progress packet instead of twice per sync.
+    private(set) var isSyncing = false
     private var syncTimeoutTask: Task<Void, Never>?
     /// Hard ceiling on how long the bar stays up without a fresh progress event.
     private let syncStallTimeout: UInt64 = 20
@@ -736,6 +739,9 @@ final class RingSyncCoordinator {
         lastSyncAt = Date()
         guard stage != "done" else { endSync(); return }
         syncStage = stage
+        // Transition-guarded: Observation notifies on every set (no equality check), so an
+        // unconditional write here would put the per-packet churn back into every observer.
+        if !isSyncing { isSyncing = true }
         armSyncTimeout()
     }
 
@@ -743,6 +749,7 @@ final class RingSyncCoordinator {
         syncTimeoutTask?.cancel()
         syncTimeoutTask = nil
         syncStage = nil
+        if isSyncing { isSyncing = false }
         // The sync just ended (done / disconnect / stall timeout) — wake anyone waiting on it.
         for id in Array(syncWaiters.keys) { resumeSyncWaiter(id) }
     }

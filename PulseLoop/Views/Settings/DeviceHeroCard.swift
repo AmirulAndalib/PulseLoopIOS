@@ -239,6 +239,12 @@ struct DeviceHeroCard: View {
         case .colmiR02, .colmiSmartHealth: return nil
         case .tk5: return "tk5"
         case .luckRing: return "luckring-tk18"
+        // R10M is the only catalogued ring in this family and the only one anyone has tested, so its art
+        // is the family's representative — an uncatalogued YCBT ring is far more likely to be one of
+        // these than anything else.
+        case .ycbt: return "r10m"
+        // No RWfit hardware captured yet, so no product art — the generic ring is the honest choice.
+        case .rwfit: return nil
         // The connection reveals only the family; both R11 firmwares share the generic Colmi ring line,
         // so the CRP family falls back to the generic ring here (the carousel card carries its own art).
         case .crp: return nil

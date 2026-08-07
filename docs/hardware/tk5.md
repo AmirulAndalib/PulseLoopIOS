@@ -24,18 +24,20 @@ YCBT** protocol on a `be940` service — nothing in common at the wire level wit
 
 ## Not the only ring that speaks it
 
-The TK5 is one of **two** ring families PulseLoop drives over YCBT. The other is
-**[Colmi rings that ship with SmartHealth](colmi.md#smarthealth-app-colmi-rings)** instead of QRing.
-The protocol is byte-identical, so they share the whole driver (the device-neutral `YCBT*` core); each
-family adds only a coordinator with its advertisement matcher and capability set. They differ in two
-ways:
+The TK5 is one of **three** ring families PulseLoop drives over YCBT. The others are the
+**[R10M / LittleMeatball](r10m.md)** and **[Colmi rings that ship with SmartHealth](colmi.md#smarthealth-app-colmi-rings)**
+instead of QRing. The protocol is byte-identical, so they share the whole driver (the device-neutral
+`YCBT*` core); each family adds only a coordinator with its advertisement matcher and capability set,
+plus a small profile for firmware quirks. They differ in three ways:
 
-| | TK5 | SmartHealth-Colmi |
-|---|---|---|
-| **Advertisement** | `TK5 <4 hex>` — unambiguous, so it auto-detects | a Colmi-line name, which a *QRing* Colmi can also carry, so PulseLoop asks which app the ring came with |
-| **SupportFunction bitmap** (`02 01`) | gates temperature, BP, stress, fatigue, blood sugar. HRV is **not** gated — it was observed working on this ring | gates those *and* HRV, which the tested R09 denies |
+| | TK5 | R10M | SmartHealth-Colmi |
+|---|---|---|---|
+| **Advertisement** | `TK5 <4 hex>` — unambiguous, so it auto-detects | `R10M <4 hex>` **and** the `be940000` service | a Colmi-line name, which a *QRing* Colmi can also carry, so PulseLoop asks which app the ring came with |
+| **Hardware validation** | none — the protocol is proven on a sibling, this ring isn't | ✅ full session on FW 2.32 | an R99 runs it daily |
+| **SupportFunction bitmap** (`02 01`) | gates temperature, BP, stress, fatigue, blood sugar. HRV is **not** gated — it was observed working on this ring | gates all of those *and* HRV | gates those *and* HRV, which the tested R09 denies |
 
-A fix to any `YCBT*` file fixes both rings; a regression in one breaks both.
+A fix to any `YCBT*` file fixes all three rings; a regression in one breaks all three. The R10M also
+suppresses two commands the other two send — see [its firmware quirks](r10m.md#firmware-quirks).
 
 ## At a glance
 
@@ -166,8 +168,10 @@ replay, so a double-sync produces no duplicates. The cost is a longer sync as th
   emits a cached resting HR (~87 bpm) even off-finger, which would mask real readings. Live HR comes
   solely from the proprietary `06 01` stream, as in the official app.
 - **Timestamps are timezone-naive.** The ring stores local wall-clock seconds with no timezone byte,
-  so the decoder un-applies the device's UTC offset to recover the true instant. This is exact for
-  same-session syncs and can be an hour off across a DST transition.
+  so the decoder un-applies the device's UTC offset to recover the true instant. The offset is
+  resolved at each record's *own* date, so history read across a DST change decodes correctly; the
+  only residue is the ambiguous hour a fall-back repeats and the hour a spring-forward skips, which
+  the wire format simply cannot disambiguate.
 
 ---
 
