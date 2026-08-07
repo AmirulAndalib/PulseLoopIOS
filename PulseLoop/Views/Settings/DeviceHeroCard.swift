@@ -243,6 +243,8 @@ struct DeviceHeroCard: View {
         // is the family's representative — an uncatalogued YCBT ring is far more likely to be one of
         // these than anything else.
         case .ycbt: return "r10m"
+        // No RWfit hardware captured yet, so no product art — the generic ring is the honest choice.
+        case .rwfit: return nil
         case nil: return nil
         }
     }
