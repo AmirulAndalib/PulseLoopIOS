@@ -79,6 +79,17 @@ protocol WearableDriver: AnyObject {
 
     /// The stateful brain: startup sequence + (for Colmi) the response-driven history machine.
     func makeSyncEngine() -> RingSyncEngine
+
+    /// Called once per GATT link, immediately after service discovery and before any characteristic
+    /// I/O, with every service UUID the peripheral exposes — including ones outside `serviceUUIDs`.
+    ///
+    /// Exists for the one family whose *wire framing* cannot be known before connect: RWfit rings all
+    /// share the `A00A`/`B002`/`B003` GATT but speak two different framings, distinguished only by
+    /// which sibling services (JieLi `AE00`, Telink/PixArt OTA) the firmware exposes. The vendor app
+    /// makes the same decision in `onServicesDiscovered`. Runs before notify subscription — and so
+    /// before `.connected`, `immediatePostSubscriptionCommands()` and `runStartup()` — which
+    /// guarantees framing is fixed before the first outbound frame. Default: no-op.
+    func servicesDiscovered(_ services: [CBUUID])
 }
 
 extension WearableDriver {
@@ -91,6 +102,8 @@ extension WearableDriver {
     /// starts notifying.
     var requiredSubscriptionsBeforeConnected: [CBUUID] { [] }
     func immediatePostSubscriptionCommands() -> [Data] { [] }
+    /// Only a driver whose framing depends on the discovered GATT (RWfit) cares.
+    func servicesDiscovered(_ services: [CBUUID]) {}
 }
 
 /// User-chosen all-day measurement configuration, passed as a plain value from the app layer into a

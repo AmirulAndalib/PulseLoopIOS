@@ -89,13 +89,12 @@ final class EventPersistenceSubscriber {
     private let context: ModelContext
     private var task: Task<Void, Never>?
 
-    #if DEBUG
-    /// Rolling cap for the DEBUG-only raw-packet trace, and how often we prune (every Nth insert,
-    /// so we don't pay a fetch on every packet during a sync burst).
+    /// Rolling cap for the raw-packet trace, and how often we prune (every Nth insert, so we don't
+    /// pay a fetch on every packet during a sync burst). DEBUG builds always capture; release
+    /// builds only when the user opts in (see `RawPacketCapture`).
     private let rawPacketCap = 2_000
     private let rawPacketPruneInterval = 200
     private var rawPacketInsertsSincePrune = 0
-    #endif
 
     /// Coalesced-save state. During a sync the ring streams hundreds of events; saving per event
     /// woke every `@Query` hundreds of times (the re-render storm). Instead we insert/mutate without
@@ -242,9 +241,12 @@ final class EventPersistenceSubscriber {
             context.insert(device)
             recordBatterySample(percent)
         case let .rawPacket(direction, data, decoded):
-            // The raw byte trace is a developer diagnostic only — never stored in release builds, so
-            // production never persists protocol hex/opcodes.
-            #if DEBUG
+            // The raw byte trace is a developer diagnostic. DEBUG builds always keep it; release
+            // builds keep it only while the user has explicitly enabled capture in Privacy & Data —
+            // the toggle exists so a remote tester on TestFlight can hand back protocol bytes from a
+            // ring family we've never had in hand (raw packets encode health data, hence opt-in,
+            // off by default and clearable).
+            guard RawPacketCapture.isEnabled else { return }
             context.insert(
                 RawPacketRow(
                     direction: direction,
@@ -255,14 +257,13 @@ final class EventPersistenceSubscriber {
                     confidence: decoded.confidence
                 )
             )
-            // Keep the debug trace a rolling window so it can't grow without bound. Prune only
-            // every Nth insert to avoid a fetch on every packet during a sync burst.
+            // Keep the trace a rolling window so it can't grow without bound. Prune only every Nth
+            // insert to avoid a fetch on every packet during a sync burst.
             rawPacketInsertsSincePrune += 1
             if rawPacketInsertsSincePrune >= rawPacketPruneInterval {
                 rawPacketInsertsSincePrune = 0
                 DebugRepository.pruneRawPackets(maxRows: rawPacketCap, context: context)
             }
-            #endif
         case let .derivedUpdate(kind, entityType, entityId, payloadJSON):
             context.insert(DerivedUpdateRow(kind: kind, entityType: entityType, entityId: entityId, payloadJSON: payloadJSON))
         case let .activityUpdate(timestamp, steps, distanceMeters, calories):

@@ -53,7 +53,9 @@ enum RingAppVariant: String, CaseIterable, Identifiable, Sendable {
         switch family {
         case .colmiR02: self = .qring
         case .colmiSmartHealth: self = .smartHealth
-        case .jring, .tk5, .luckRing, .ycbt: return nil
+        // RWfit's two firmwares differ in *wire framing*, not app — one family, and the driver
+        // detects the framing from the GATT, so there is nothing for the user to declare.
+        case .jring, .tk5, .luckRing, .ycbt, .rwfit: return nil
         }
     }
 
@@ -117,6 +119,9 @@ extension RingDeviceType {
         // Validated end-to-end on an R10M FCF4 running firmware 2.32 — pairing, handshake, reconnect,
         // activity and history sync, HR/SpO₂/BP, battery, sleep stages and REM.
         case .ycbt: return .full
+        // Reconstructed entirely from the vendor app's decompiled source, no hardware seen yet —
+        // every layout is cited in docs/hardware/rwfit.md and awaits the first diagnostics capture.
+        case .rwfit: return .limited
         }
     }
 }
@@ -201,6 +206,18 @@ extension WearableModel {
         id: "luckring-tk18", displayName: "TK18", brand: "LuckRing", family: .luckRing,
         tint: PulseColors.accent, blurb: "HR · SpO₂ · HRV · Temp · BP · Sleep · Steps",
         advertisedNamePatterns: ["^TK18([ _-].*)?$"], imageName: "luckring-tk18"
+    )
+
+    /// RWfit rings (the `com.rw.revivalfit` app) — sold under assorted brands; the known unit was
+    /// bought as a "Colmi", which is why the blurb names the app, not a brand. `advertisedNamePatterns`
+    /// is **deliberately empty**: no RWfit hardware has been captured yet, so any pattern would be a
+    /// guess, and the coordinator recognizes these rings by service/manufacturer data alone — the
+    /// pattern list is user-facing identity only, and it gets filled in from the first diagnostics
+    /// export. No `imageName`: `RingArtView`'s generic fallback is the honest choice until then.
+    static let rwfitRing = WearableModel(
+        id: "rwfit-ring", displayName: "RWfit ring", brand: "RWfit", family: .rwfit,
+        tint: PulseColors.spo2, blurb: "HR · SpO₂ · Sleep · Steps — works with RWfit-app rings",
+        advertisedNamePatterns: []
     )
 
     // Yawell-branded variants of the same hardware.
@@ -335,6 +352,8 @@ extension WearableModel {
         r10m,
         tk5,
         luckRingTK18,
+        // Position is irrelevant for matching — the RWfit card has no name patterns to race.
+        rwfitRing,
     ]
 
     static func model(id: String?) -> WearableModel? {

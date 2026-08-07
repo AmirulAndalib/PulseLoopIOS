@@ -47,6 +47,10 @@ final class RingBLEClient: NSObject {
         ColmiCoordinator.self,
         LuckRingCoordinator.self,
         TK5Coordinator.self,
+        // Last is the zero-risk slot: RWfit matches only family-exclusive signals (the `A00A`
+        // service; company IDs `0x05D6`/`0x06D6`) that no coordinator above claims, and it matches
+        // no names at all, so it can neither shadow nor be shadowed.
+        RWfitCoordinator.self,
     ]
 
     /// Which coordinator serves a connection. Pure, so the pairing rules are testable without a
@@ -785,6 +789,9 @@ extension RingBLEClient: CBPeripheralDelegate {
     nonisolated func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         MainActor.assumeIsolated {
             guard let driver = activeDriver else { return }
+            // Full service list first, before any characteristic I/O: the RWfit driver picks its wire
+            // framing off which sibling services exist (see `WearableDriver.servicesDiscovered`).
+            driver.servicesDiscovered((peripheral.services ?? []).map(\.uuid))
             for service in peripheral.services ?? [] {
                 if driver.serviceUUIDs.contains(service.uuid) {
                     var chars = driver.notifyUUIDs
