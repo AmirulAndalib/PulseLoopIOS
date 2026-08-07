@@ -1,22 +1,26 @@
 import Foundation
 
+/// Nights before today to pull once per connection. See `CRPSyncEngine.sendSleepBackfill`.
+private let crpSleepBackfillDays = 6
+
 /// Per-connection orchestration for a CRP ("crrepa") ring. Ported in spirit from the Moyoung
 /// "Da Rings" connect flow (`d1/b.java` + `b1` package builders): after the link is up the app sets
 /// the clock and pushes user anthropometrics, then the ring streams current steps (`fdd1`) on its own
-/// and answers measurement commands. There is no bulk history state machine in v1, so most of the
-/// `RingSyncEngine` surface is left as the protocol's no-op defaults.
+/// and answers measurement commands.
 ///
-/// v1 scope: clock + user-info handshake, live/manual heart rate, find-device, factory reset.
-/// Steps and battery arrive as autonomous pushes/reads (see `CRPDriver`) and need no command here.
-/// Sleep / SpO2 / HRV / stress / temperature and history sync are deliberately deferred — their
-/// reply layouts aren't yet confirmed against the decompile, and `CRPCoordinator` doesn't advertise
-/// those capabilities, so nothing calls the corresponding methods.
+/// Scope: clock + user-info handshake, spot HR + SpO2 (Measure button), all-day vital timing
+/// enable/disable driven by `MeasurementSettings`, find-device. Steps and battery arrive as
+/// autonomous pushes/reads (see `CRPDriver`). HRV / stress / temperature are all-day metrics — their
+/// timing is enabled here and live results decode via `CRPDecoder`. Of the stored day timelines,
+/// sleep (group-2/cmd-14) is decoded (`CRPDecoder.decodeSleep`, confirmed against a hardware
+/// capture), and the group-2 all-day "timing" vital histories (HR/SpO2/HRV/stress) decode into
+/// `.historyMeasurement` samples; their multi-frame replies reassemble via the next-frame follow-up
+/// in `handle`.
 ///
 /// Factory reset / power off: the CRP command (`CRPProtocol.factoryReset`, group 3 / cmd 0) is known,
 /// but iOS's `RingSyncEngine` exposes no factory-reset/power-off hook (the Colmi encoder has the
-/// opcodes too, with no invocation path), so there is nothing to wire it into here — matching the
-/// Android `CRPSyncEngine`, whose `factoryReset()` this port intentionally does not surface as a
-/// capability.
+/// opcodes too, with no invocation path), so there is nothing to wire it into here — which is why
+/// `CRPCoordinator` doesn't claim `.factoryReset` even though the Android coordinator does.
 @MainActor
 final class CRPSyncEngine: RingSyncEngine {
     nonisolated deinit {}   // skip the main-actor isolated-deinit hop (crashes on older sim runtimes)
@@ -25,11 +29,16 @@ final class CRPSyncEngine: RingSyncEngine {
     private var profile: UserProfileValues?
 
     /// User-chosen all-day measurement config. Applied in the connect handshake and updatable
-    /// live via `applyMeasurementSettings`. `nil` ⇒ the user has never saved one; unlike QRing/YCBT
-    /// the CRP ring exposes no way to read back its own config, so a fresh R11 ships with every
-    /// all-day monitor OFF and never records anything to sync. We therefore fall back to
+    /// live via `applyMeasurementSettings`. `nil` ⇒ the user has never saved one, and a fresh R11
+    /// ships with every all-day monitor OFF, so it records nothing to sync. We therefore fall back to
     /// `MeasurementSettings.allOnDefault` (matching how `ColmiSyncEngine` force-enables on connect)
     /// so the day timeline actually accumulates.
+    ///
+    /// Note this is a *forced* default, not a read-back: `sendConnectionReadBacks` now asks the ring
+    /// for each monitor's current interval, but the replies are only surfaced as diagnostics — we
+    /// still impose a config rather than adopting the ring's. Matching the vendor here (query state,
+    /// apply the saved config, leave the ring alone otherwise) is a known open divergence on both
+    /// platforms; it needs the read-back replies confirmed against hardware first.
     private var measurementSettings: MeasurementSettings?
 
     /// Frame follow-ups already requested this poll pass, keyed `cmd * 100 + frameIndex`, so a ring
@@ -46,8 +55,13 @@ final class CRPSyncEngine: RingSyncEngine {
         // the ring's step/calorie algorithm has real inputs.
         send(CRPProtocol.setTime())
         // Query firmware version so the UI doesn't show "Firmware: reading" (zaggash's report).
+        // The 23-sends/0-replies in the 2026-07-25 capture were our fault, not the ring's: the old
+        // opcode was group 7 cmd 1, which the vendor SDK uses for `querySavedGomoreKey`, not
+        // firmware. The real query is group 3 cmd 3 (`b1/l.k` → `d1/b.queryFirmwareVersion`), and it
+        // answers with a UTF-8 string — `MOY-R1K3-2.1.6` on zaggash's R11.
         send(CRPProtocol.queryFirmwareVersion())
         if let profile { send(userInfoFrame(profile)) }
+        sendConnectionReadBacks()
         // Enable all-day vital monitoring. A fresh ring has these OFF, so without this the ring
         // stores no HR/SpO2/HRV/stress/temperature history and every history query below returns an
         // empty reply (Android issue #29, zaggash's full-day capture). When the user has saved a
@@ -57,6 +71,42 @@ final class CRPSyncEngine: RingSyncEngine {
         // and a foreground sync both re-invoke it), so this runs at the app's configured cadence; the
         // ring samples at hrIntervalMinutes (above). The ring only emits history replies once asked.
         queryAllHistory()
+    }
+
+    /// Whether this connection's read-backs have been sent. A fresh `CRPSyncEngine` is built per
+    /// connection (`RingBLEClient.installDriver` calls `driver.makeSyncEngine()` on connect), so
+    /// instance state gives "once per connection" for free.
+    private var readBacksSent = false
+
+    /// Ask the ring to describe itself, once per connection.
+    ///
+    /// `querySupportSpO2Type` answers NOT_SUPPORT / SLEEP_OXYGEN / TIMING_OXYGEN; the timing-state
+    /// queries report each all-day monitor's configured interval (0 = off). Together they are the
+    /// evidence base for whether a silent history query means "the monitor is off" or "this ring
+    /// lacks the sensor" — stress (`2/47`), temperature (`2/22`) and firmware (formerly `7/1`) all
+    /// went unanswered on zaggash's ring, and these replies are how we tell those apart next capture.
+    ///
+    /// Deliberately **not** part of the poll pass. `runStartup` doubles as the background re-sync,
+    /// but what a ring supports cannot change between syncs. Re-asking would add six writes to every
+    /// pass on a ring that funnels the handshake, timing config, history pull *and* on-demand
+    /// measures through the single `fdd2` channel — and a spot SpO2 needs ~48 s of that channel to
+    /// return a reading.
+    ///
+    /// **Call order matters: this must run BEFORE `applyTimingSettings`.** The state queries report
+    /// each monitor's *current* interval, and `applyTimingSettings` force-enables everything moments
+    /// later. Ask afterwards and every reply describes the state we just imposed, which answers
+    /// nothing — the whole point is to learn whether stress and temperature were silent because their
+    /// monitor was off. `CRPSyncEngineTests` pins the ordering; if that assertion ever fails, fix the
+    /// call site rather than the expectation.
+    private func sendConnectionReadBacks() {
+        if readBacksSent { return }
+        readBacksSent = true
+        send(CRPProtocol.querySupportSpO2Type())
+        send(CRPProtocol.queryTimingHeartRateState())
+        send(CRPProtocol.queryTimingHrvState())
+        send(CRPProtocol.queryTimingSpO2State())
+        send(CRPProtocol.queryTimingStressState())
+        send(CRPProtocol.queryTimingTempState())
     }
 
     /// Request the stored all-day timelines the ring has accumulated: the group-2 "timing" vital
@@ -71,6 +121,31 @@ final class CRPSyncEngine: RingSyncEngine {
         send(CRPProtocol.queryTimingStressHistory())
         send(CRPProtocol.queryHistoryTemp())
         send(CRPProtocol.queryHistorySleep())
+        sendSleepBackfill()
+    }
+
+    /// Whether this connection has already backfilled older nights. Same "fresh engine per
+    /// connection" trick as `readBacksSent`.
+    private var sleepBackfillSent = false
+
+    /// Pull the nights *before* today, once per connection.
+    ///
+    /// The poll pass above only ever asks for `daysAgo = 0`, so the app's stored history could only
+    /// ever grow one night at a time from whenever the user installed. Asking for the ring's own
+    /// back-catalogue is what actually restores a user's history.
+    ///
+    /// Safe to send blind. Each reply is self-describing: `payload[0]` is the ring's own day index,
+    /// so `CRPDecoder.decodeSleep` dates a night from the reply rather than from what we asked for,
+    /// and a day the ring has no record of simply produces no reply — the same nothing we get today.
+    ///
+    /// Once per connection, and deliberately short of the decoder's 14-day ceiling: `runStartup` is
+    /// also the background sync, and this ring funnels the handshake, timing config, history pull
+    /// *and* on-demand measures through one `fdd2` channel (a spot SpO2 needs ~48 s of it). A week is
+    /// the useful-recovery/quiet-channel trade; raise it once hardware shows the ring answers deeper.
+    private func sendSleepBackfill() {
+        if sleepBackfillSent { return }
+        sleepBackfillSent = true
+        for daysAgo in 1...crpSleepBackfillDays { send(CRPProtocol.queryHistorySleep(daysAgo: daysAgo)) }
     }
 
     /// The last frame index each timing vital emits before its day is complete (vendor terminal
@@ -133,7 +208,12 @@ final class CRPSyncEngine: RingSyncEngine {
     }
 
     // MARK: - Measurement settings
-    func setMeasurementSettings(_ settings: MeasurementSettings?) {
+    /// Takes a non-optional `MeasurementSettings` because that is `RingSyncEngine`'s requirement.
+    /// It used to take `MeasurementSettings?`, which is a *different* signature — so it satisfied
+    /// nothing, the protocol's no-op default extension supplied conformance instead, and every
+    /// `RingSyncCoordinator` call landed there. The user's saved config was silently discarded and
+    /// `runStartup` always fell back to `.allOnDefault`.
+    func setMeasurementSettings(_ settings: MeasurementSettings) {
         measurementSettings = settings
     }
 

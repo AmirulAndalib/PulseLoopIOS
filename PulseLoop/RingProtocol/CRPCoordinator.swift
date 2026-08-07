@@ -40,6 +40,11 @@ final class CRPCoordinator: WearableCoordinator {
     ///
     /// `manualSpo2` is claimed alongside `manualHeartRate`: both surface a "Measure now" button in
     /// Vitals, the start/stop commands are confirmed (`b1/h.d`), and cmd-11 results now decode.
+    /// SpO2 stays **unconditional** rather than bitmap-gated even though `CRPSyncEngine` now asks the
+    /// ring directly (`querySupportSpO2Type`, group 2 / cmd 37): the hardware is confirmed by a real
+    /// reading in zaggash's 2026-07-23 capture (`group 1 / cmd 11` payload `0x61` = 97 %), and
+    /// `refinedCapabilities` is additive-only, so gating it would only ever be a no-op or a
+    /// regression. The read-back is decoded for the raw-packet feed — see `CRPDecoder.decodeSpO2Support`.
     ///
     /// Steps push (`fdd1`), battery (`2a19`), find-device also confirmed. Note: HR does NOT use the
     /// standard `2a37` characteristic on CRP rings — all vital results come back as framed replies

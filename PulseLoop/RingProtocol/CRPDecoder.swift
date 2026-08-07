@@ -86,8 +86,9 @@ enum CRPDecoder {
     }
 
     /// Framed `fdd3` reply: `FD DA 10 <len> <group> <cmd> <payload>`.
-    /// Real-time vital results come on group 1; stored day history on group 2; device info on group 7;
-    /// power control + the autonomous wear-state push on group 3.
+    /// Real-time vital results come on group 1; sleep/all-day history and the capability read-backs on
+    /// group 2; device identity and state pushes on group 3. Group 7 is the vendor's Gomore module,
+    /// not device info.
     private static func decodeFramedReply(_ frame: Data, now: Date, calendar: Calendar) -> [RingDecodedEvent] {
         let b = [UInt8](frame)
         if b.count < CRPProtocol.headerSize { return [] }
@@ -103,14 +104,24 @@ enum CRPDecoder {
             return decodeVitalResult(cmd: cmd, payload: payload, now: now)
         }
 
-        // Group 2: sleep + the all-day "timing" vital timelines + temperature history.
+        // Group 7: the vendor's Gomore module (`b1/r`). Nothing we send lands here any more; kept so
+        // an unsolicited Gomore frame in a capture is still recorded rather than dropped.
+        if group == CRPCommands.groupGomore {
+            return ack()
+        }
+
+        // Group 2: sleep + the all-day "timing" vital timelines + temperature history + read-backs.
         //   cmd 14          → sleep (`e1/j`), confirmed against a hardware capture.
         //   cmd 15/16/17/47 → HR/HRV/SpO2/stress all-day timeline (`e1/{f,g,d,l}`), confirmed
         //                     against zaggash's R11 capture (Android issue #29).
-        //   cmd 48          → temperature history, still an ack until a non-empty capture pins it.
+        //   cmd 37          → the ring's own SpO2-hardware answer.
+        //   cmd 22          → temperature history, still an ack until a non-empty capture pins it.
         if group == CRPCommands.groupHistory {
             if cmd == CRPCommands.cmdQueryHistorySleep {
                 return decodeSleep(payload, now: now, calendar: calendar)
+            }
+            if cmd == CRPCommands.cmdQuerySupportSpO2Type {
+                return decodeSpO2Support(payload)
             }
             if let timing = decodeTimingHistory(cmd: cmd, payload: payload, now: now, calendar: calendar) {
                 return timing
@@ -118,17 +129,17 @@ enum CRPDecoder {
             return ack()
         }
 
-        // Group 7: device info (decompiled `b1/r`).
-        if group == CRPCommands.groupDeviceInfo {
-            return decodeHistoryOrDeviceInfoResponse(cmd: cmd, payload: payload, now: now)
-        }
-
-        // Group 3: power control + the autonomous wear-state push (`g1/a.java` case 3→7,
-        // `onWearStateChange(payload[0] > 0)`). Confirmed against zaggash's R11: a spot measure
-        // returns nothing while `payload[0] == 0` (ring off the finger).
+        // Group 3: device control, the firmware-version string (cmd 3), and the autonomous wear-state
+        // push (`g1/a.java` case 3→7, `onWearStateChange(payload[0] > 0)`). Confirmed against
+        // zaggash's R11: a spot measure returns nothing while `payload[0] == 0` (ring off the finger).
         if group == CRPCommands.groupPower {
             if cmd == CRPCommands.cmdWearState, let first = payload.first {
                 return [.wearingStatus(worn: first != 0, timestamp: now)]
+            }
+            if cmd == CRPCommands.cmdQueryFirmwareVersion,
+               let firmware = decodeFirmwareVersion(payload) {
+                // nil ⇒ nothing readable in the payload; fall through to the ack below.
+                return firmware
             }
             return ack()
         }
@@ -184,7 +195,7 @@ enum CRPDecoder {
     }
 
     /// Decode a CRP all-day "timing" vital-history reply (group 2). Returns `nil` for a non-timing
-    /// group-2 cmd (e.g. temp cmd 48) so the caller falls back to an ack. Layout, confirmed against
+    /// group-2 cmd (e.g. temp cmd 22) so the caller falls back to an ack. Layout, confirmed against
     /// zaggash's R11 capture and the vendor parsers `e1/{f,g,d,l}.java`:
     ///   `[day][frameIndex][slot samples…]` — one 5-minute slot per sample, `0` = no reading.
     /// HR/SpO2/stress use one byte per slot; HRV a little-endian 2-byte value. Each slot's absolute
@@ -243,12 +254,49 @@ enum CRPDecoder {
         return events
     }
 
-    /// Decode group-7 responses: history queries (cmd 4–7, 14, 48) and device info (cmd 0, 1, 13).
-    /// History layouts are unconfirmed against hardware — emit as CommandAck so the raw-packet feed
-    /// records them without inventing metric values. Extend `decodeHistoryOrDeviceInfoResponse`
-    /// as more layouts are confirmed.
-    private static func decodeHistoryOrDeviceInfoResponse(cmd: Int, payload: [UInt8], now: Date) -> [RingDecodedEvent] {
-        return [.commandAck(commandId: UInt8(truncatingIfNeeded: (CRPCommands.groupDeviceInfo << 4) | (cmd & 0x0F)))]
+    /// The firmware version string (`group 3 / cmd 3`). Vendor `g1/a.i1`:
+    /// `onVersion(new String(payload, StandardCharsets.UTF_8))` — a bare UTF-8 string with no length
+    /// prefix or terminator, e.g. `MOY-R1K3-2.1.6` on zaggash's R11 (Android issue #29).
+    ///
+    /// Returns `nil` when the payload holds nothing readable, so the caller acks it instead.
+    /// Surfaced as `.firmware(version:)`, which the event bridge maps to `.firmwareVersion` — a
+    /// device-info event, *not* a connection-state one. That distinction matters: the query is part of
+    /// `CRPSyncEngine.runStartup`, which is also the ~30-minute background sync, so a reply that
+    /// bridged to "connected" would re-fire on every pass.
+    private static func decodeFirmwareVersion(_ payload: [UInt8]) -> [RingDecodedEvent]? {
+        // Trims NUL padding as well as whitespace: some firmwares pad the frame to a fixed width.
+        let version = String(decoding: payload, as: UTF8.self)
+            .trimmingCharacters(in: CharacterSet(charactersIn: " \0\t\r\n"))
+        if version.isEmpty { return nil }
+        return [.firmware(version: version)]
+    }
+
+    /// The ring's own answer to "do you have SpO2 hardware?" (`group 2 / cmd 37`). Vendor `g1/a.V0`
+    /// hands `payload[0]` to `CRPBloodOxygenType`, which defines exactly three values:
+    /// **0 = NOT_SUPPORT, 1 = SLEEP_OXYGEN, 2 = TIMING_OXYGEN** — `getInstance` returns nil for
+    /// anything else, so only 1 and 2 count as a claim of support.
+    ///
+    /// Treating "any non-zero" as support would be a real hazard on this ring: it uses `0xFF` as a
+    /// no-reading sentinel elsewhere (every failed spot SpO2 answers `group 1 / cmd 11 [FF]`), and a
+    /// `0xFF` here would otherwise read as a capability claim.
+    ///
+    /// **This is currently diagnostic, not capability-driving.** SpO2 is in `CRPCoordinator`'s
+    /// unconditional capabilities because it is hardware-confirmed: zaggash's 2026-07-23 capture has a
+    /// real reading (`group 1 / cmd 11` payload `0x61` = 97 %). `WearableCoordinator.refinedCapabilities`
+    /// is additive-only (`capabilities.union(bitmapGated ∩ derived)`), so a NOT_SUPPORT answer cannot
+    /// take SpO2 away — decoding it simply puts the ring's own answer in the raw-packet feed, where the
+    /// next capture can confirm or challenge what we assume. Acting on a NOT_SUPPORT would need a
+    /// subtractive mechanism that does not exist yet, and should not be invented without a ring that
+    /// actually reports one.
+    private static func decodeSpO2Support(_ payload: [UInt8]) -> [RingDecodedEvent] {
+        guard let type = payload.first else {
+            return [.commandAck(commandId: UInt8(truncatingIfNeeded:
+                (CRPCommands.groupHistory << 4) | (CRPCommands.cmdQuerySupportSpO2Type & 0x0F)))]
+        }
+        // Only the two documented "supported" values; 0 = NOT_SUPPORT and anything else is unknown.
+        // Report an empty set rather than nothing, so the feed records that the ring was asked.
+        let granted: Set<WearableCapability> = (type == 1 || type == 2) ? [.spo2, .manualSpo2] : []
+        return [.supportFunctions(granted)]
     }
 
     private struct SleepTransition {

@@ -380,6 +380,79 @@ final class CRPDecoderTests: XCTestCase {
         XCTAssertTrue(CRPDecoder.decode(frame, from: fdd3).isEmpty)
     }
 
+    // MARK: - Firmware version + capability read-backs
+
+    /// `group 3 / cmd 3` carries a bare UTF-8 string with no length prefix or terminator
+    /// (`g1/a.i1`: `onVersion(new String(payload, UTF_8))`) — `MOY-R1K3-2.1.6` on zaggash's R11.
+    func testFirmwareVersionDecodesAsABareUTF8String() {
+        let frame = CRPProtocol.frame(group: CRPCommands.groupPower,
+                                      cmd: CRPCommands.cmdQueryFirmwareVersion,
+                                      payload: Array("MOY-R1K3-2.1.6".utf8))
+        guard case let .firmware(version) = CRPDecoder.decode(frame, from: fdd3).first else {
+            return XCTFail("expected firmware")
+        }
+        XCTAssertEqual(version, "MOY-R1K3-2.1.6")
+    }
+
+    /// Some firmwares pad the frame to a fixed width; NUL padding must not survive into the UI.
+    func testFirmwareVersionTrimsNulPadding() {
+        let frame = CRPProtocol.frame(group: CRPCommands.groupPower,
+                                      cmd: CRPCommands.cmdQueryFirmwareVersion,
+                                      payload: Array("V1.2".utf8) + [0, 0, 0])
+        guard case let .firmware(version) = CRPDecoder.decode(frame, from: fdd3).first else {
+            return XCTFail("expected firmware")
+        }
+        XCTAssertEqual(version, "V1.2")
+    }
+
+    /// An empty/all-padding payload has no version in it — ack rather than publish an empty string.
+    func testEmptyFirmwarePayloadFallsBackToAnAck() {
+        let frame = CRPProtocol.frame(group: CRPCommands.groupPower,
+                                      cmd: CRPCommands.cmdQueryFirmwareVersion,
+                                      payload: [0, 0])
+        guard case .commandAck = CRPDecoder.decode(frame, from: fdd3).first else {
+            return XCTFail("expected commandAck")
+        }
+    }
+
+    /// `CRPBloodOxygenType` defines exactly three values: 0 NOT_SUPPORT, 1 SLEEP_OXYGEN,
+    /// 2 TIMING_OXYGEN. Only 1 and 2 are a claim of support.
+    func testSpO2SupportGrantsCapabilitiesOnlyForTheTwoDocumentedTypes() {
+        for type in [1, 2] {
+            let frame = CRPProtocol.frame(group: CRPCommands.groupHistory,
+                                          cmd: CRPCommands.cmdQuerySupportSpO2Type,
+                                          payload: [UInt8(type)])
+            guard case let .supportFunctions(caps) = CRPDecoder.decode(frame, from: fdd3).first else {
+                return XCTFail("expected supportFunctions for type \(type)")
+            }
+            XCTAssertEqual(caps, [.spo2, .manualSpo2])
+        }
+    }
+
+    /// `0xFF` is this ring's no-reading sentinel (a failed spot SpO2 answers `1/11 [FF]`). Treating
+    /// "any non-zero" as support would read that sentinel as a capability claim.
+    func testSpO2SupportRejectsNotSupportAndTheFFSentinel() {
+        for type: UInt8 in [0, 0xFF] {
+            let frame = CRPProtocol.frame(group: CRPCommands.groupHistory,
+                                          cmd: CRPCommands.cmdQuerySupportSpO2Type,
+                                          payload: [type])
+            guard case let .supportFunctions(caps) = CRPDecoder.decode(frame, from: fdd3).first else {
+                return XCTFail("expected supportFunctions for type \(type)")
+            }
+            XCTAssertTrue(caps.isEmpty, "type \(type) must not claim SpO2")
+        }
+    }
+
+    /// Group 7 is the vendor's Gomore module. Nothing we send lands there, but an unsolicited frame
+    /// should still be recorded rather than dropped.
+    func testGomoreGroupRepliesAreAcked() {
+        let frame = CRPProtocol.frame(group: CRPCommands.groupGomore,
+                                      cmd: CRPCommands.cmdQuerySupportGomore, payload: [1])
+        guard case .commandAck = CRPDecoder.decode(frame, from: fdd3).first else {
+            return XCTFail("expected commandAck")
+        }
+    }
+
     /// A night that starts before midnight: the first record reads later on the clock than the last,
     /// so the anchor rolls back a day rather than placing the night in the wrong evening.
     func testSleepAnchorsAnEveningStartBeforeMidnight() {

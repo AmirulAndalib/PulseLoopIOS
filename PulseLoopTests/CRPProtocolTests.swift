@@ -65,4 +65,45 @@ final class CRPProtocolTests: XCTestCase {
     func testFactoryResetIsGroup3Cmd0WithNoPayload() {
         XCTAssertEqual(CRPProtocol.factoryReset(), Data([0xFD, 0xDA, 0x10, 6, 3, 0]))
     }
+
+    // MARK: - Opcodes corrected against their `d1/b.java` callers
+
+    /// `b1/l.k` → `d1/b.queryFirmwareVersion` = `q.b(3,3)`. The old `7/1` was `b1/r.d`, the vendor's
+    /// `querySavedGomoreKey` — which is why the R11 answered none of the 23 sends (Android issue #29).
+    func testFirmwareVersionQueryIsGroup3Cmd3() {
+        XCTAssertEqual(CRPProtocol.queryFirmwareVersion(), Data([0xFD, 0xDA, 0x10, 6, 3, 3]))
+    }
+
+    /// `b1/i0.b` → `q.c(2,22,[day,idx])`, the same `[day, frameIndex]` shape as the other timing
+    /// histories. `q.b(2,48)` is `b1/e0.d` = `querySleepState`, not temperature.
+    func testTemperatureHistoryIsGroup2Cmd22WithDayAndFrameIndex() {
+        XCTAssertEqual(CRPProtocol.queryHistoryTemp(), Data([0xFD, 0xDA, 0x10, 8, 2, 22, 0, 0]))
+        XCTAssertEqual(CRPProtocol.queryHistoryTemp(day: 1, frameIndex: 2),
+                       Data([0xFD, 0xDA, 0x10, 8, 2, 22, 1, 2]))
+    }
+
+    /// Both temp toggles ride cmd 13 with an enable byte — `d1/b.enableTimingTemp` and
+    /// `disableTimingTemp` both call `b1/i0.c(Bool)`. Cmd 32 (`b1/i0.d`) is the *spot* toggle;
+    /// sending it as a disable would have started a one-shot measurement instead.
+    func testTempAllDayTogglesShareCmd13AndDifferOnlyInTheEnableByte() {
+        XCTAssertEqual(CRPProtocol.enableTimingTemp(), Data([0xFD, 0xDA, 0x10, 7, 1, 13, 1]))
+        XCTAssertEqual(CRPProtocol.disableTimingTemp(), Data([0xFD, 0xDA, 0x10, 7, 1, 13, 0]))
+        XCTAssertEqual(CRPProtocol.measureTemp(true), Data([0xFD, 0xDA, 0x10, 7, 1, 32, 1]))
+    }
+
+    /// The read-backs that let the ring describe itself, all on group 2 with no payload.
+    func testReadBackQueriesUseTheirVendorOpcodes() {
+        XCTAssertEqual(CRPProtocol.querySupportSpO2Type(), Data([0xFD, 0xDA, 0x10, 6, 2, 37]))   // b1/h.e
+        XCTAssertEqual(CRPProtocol.queryTimingHeartRateState(), Data([0xFD, 0xDA, 0x10, 6, 2, 6]))  // b1/t.e
+        XCTAssertEqual(CRPProtocol.queryTimingHrvState(), Data([0xFD, 0xDA, 0x10, 6, 2, 7]))     // b1/u.e
+        XCTAssertEqual(CRPProtocol.queryTimingSpO2State(), Data([0xFD, 0xDA, 0x10, 6, 2, 8]))    // b1/h.f
+        XCTAssertEqual(CRPProtocol.queryTimingStressState(), Data([0xFD, 0xDA, 0x10, 6, 2, 45])) // b1/h0.e
+        XCTAssertEqual(CRPProtocol.queryTimingTempState(), Data([0xFD, 0xDA, 0x10, 6, 2, 21]))   // b1/i0.a
+    }
+
+    /// The remaining spot-measure toggles, each `[enable]` on its own group-1 cmd.
+    func testSpotMeasureTogglesCoverEveryVital() {
+        XCTAssertEqual(CRPProtocol.measureHRV(true), Data([0xFD, 0xDA, 0x10, 7, 1, 10, 1]))
+        XCTAssertEqual(CRPProtocol.measureStress(false), Data([0xFD, 0xDA, 0x10, 7, 1, 14, 0]))
+    }
 }

@@ -16,19 +16,85 @@ final class CRPSyncEngineTests: XCTestCase {
     }
 
     /// The connect handshake's leading commands, in order: set-time, firmware query, then user info
-    /// once a profile exists. Everything after that is the all-day timing config plus the history
-    /// pull, covered by their own tests below.
+    /// once a profile exists. Everything after that is the read-backs, the all-day timing config and
+    /// the history pull, covered by their own tests below.
     func testRunStartupSendsSetTimeThenUserInfoOnceAProfileIsStored() {
         let w = FakeWriter()
         let engine = CRPSyncEngine(writer: w)
         engine.runStartup()
-        // set-time, then the firmware query that keeps the UI off "Firmware: reading".
-        XCTAssertEqual(Array(w.opcodes.prefix(2)), [[1, 1], [7, 1]])
+        // set-time, then the firmware query that keeps the UI off "Firmware: reading". Firmware is
+        // group 3 / cmd 3 (`b1/l.k`) — the old group-7 opcode was the vendor's Gomore module.
+        XCTAssertEqual(Array(w.opcodes.prefix(2)), [[1, 1], [3, 3]])
 
         w.sent.removeAll()
         engine.setUserProfile(UserProfileValues(metric: true, sex: "male", age: 30, heightCm: 180, weightKg: 75))
         engine.runStartup()
-        XCTAssertEqual(Array(w.opcodes.prefix(3)), [[1, 1], [7, 1], [1, 0]])
+        XCTAssertEqual(Array(w.opcodes.prefix(3)), [[1, 1], [3, 3], [1, 0]])
+    }
+
+    /// Nothing may target group 7 any more: every `b1/r` builder is a Gomore call, and the R11
+    /// answered none of the 23 sends in zaggash's 2026-07-25 capture (Android issue #29).
+    func testNothingIsSentToTheGomoreGroup() {
+        let w = FakeWriter()
+        let engine = CRPSyncEngine(writer: w)
+        engine.setUserProfile(UserProfileValues(metric: true, sex: "male", age: 30, heightCm: 180, weightKg: 75))
+        engine.runStartup()
+        XCTAssertFalse(w.opcodes.contains { $0[0] == 7 }, "group 7 is Gomore, not device info")
+    }
+
+    // MARK: - Connection read-backs
+
+    /// The read-backs must precede `applyTimingSettings`: they report each monitor's *current*
+    /// interval, and the timing config force-enables everything moments later. Asked afterwards,
+    /// every reply would describe the state we just imposed.
+    func testReadBacksAreSentBeforeTheTimingConfig() {
+        let w = FakeWriter()
+        let engine = CRPSyncEngine(writer: w)
+        engine.runStartup()
+        // Read-backs: SpO2 support 2/37, then the monitor-state queries 2/6, 2/7, 2/8, 2/45, 2/21.
+        for cmd in [37, 6, 7, 8, 45, 21] {
+            XCTAssertTrue(w.opcodes.contains([2, cmd]), "expected read-back group2/cmd\(cmd)")
+        }
+        guard let lastReadBack = w.opcodes.lastIndex(where: { $0[0] == 2 && [37, 6, 7, 8, 45, 21].contains($0[1]) }),
+              let firstTimingConfig = w.opcodes.firstIndex(where: { $0[0] == 1 && [6, 7, 8, 39, 13].contains($0[1]) })
+        else { return XCTFail("missing read-backs or timing config") }
+        XCTAssertLessThan(lastReadBack, firstTimingConfig,
+                          "read-backs must be asked before we impose a config")
+    }
+
+    /// What a ring supports cannot change between syncs, and `runStartup` is also the background
+    /// re-sync — so re-asking would add six writes to every pass on a single-channel ring.
+    func testReadBacksAreSentOncePerConnectionNotPerPass() {
+        let w = FakeWriter()
+        let engine = CRPSyncEngine(writer: w)
+        engine.runStartup()
+        w.sent.removeAll()
+        engine.runStartup()
+        for cmd in [37, 6, 7, 8, 45, 21] {
+            XCTAssertFalse(w.opcodes.contains([2, cmd]), "read-back group2/cmd\(cmd) must not repeat")
+        }
+    }
+
+    // MARK: - Sleep backfill
+
+    /// The poll pass only asks for `daysAgo = 0`, so without a backfill the app's stored history
+    /// could only grow one night at a time. Each reply is self-describing, so this is safe to send
+    /// blind — a day the ring has no record of simply produces no reply.
+    func testSleepBackfillPullsThePriorWeekOncePerConnection() {
+        let w = FakeWriter()
+        let engine = CRPSyncEngine(writer: w)
+        engine.runStartup()
+        let sleepDays = w.opcodes.indices
+            .filter { w.opcodes[$0] == [2, 14] }
+            .map { w.payloadByte($0, 6) }
+        XCTAssertEqual(sleepDays, [0, 1, 2, 3, 4, 5, 6], "today plus six nights of backfill")
+
+        w.sent.removeAll()
+        engine.runStartup()
+        let secondPass = w.opcodes.indices
+            .filter { w.opcodes[$0] == [2, 14] }
+            .map { w.payloadByte($0, 6) }
+        XCTAssertEqual(secondPass, [0], "the backfill is once per connection; the pass re-pulls today only")
     }
 
     func testHeartRateStartAndStopEnqueueGroup1Cmd9() {
@@ -60,9 +126,9 @@ final class CRPSyncEngineTests: XCTestCase {
 
     // MARK: - All-day monitoring + history pull
 
-    /// A fresh R11 ships with every all-day monitor OFF and cannot be asked what its config is, so
-    /// connecting without a saved config must still force them on — otherwise the ring records
-    /// nothing and every history query comes back empty (Android issue #29).
+    /// A fresh R11 ships with every all-day monitor OFF, so connecting without a saved config must
+    /// still force them on — otherwise the ring records nothing and every history query comes back
+    /// empty (Android issue #29).
     func testRunStartupForcesAllDayMonitoringOnWithoutASavedConfig() {
         let w = FakeWriter()
         let engine = CRPSyncEngine(writer: w)
@@ -73,17 +139,30 @@ final class CRPSyncEngineTests: XCTestCase {
         }
     }
 
-    /// The history pull uses the group-2 opcodes. The old group-7 ones were the device-info group
-    /// and the ring answered every one of them empty.
+    /// A saved config must actually reach the ring. `setMeasurementSettings` once took an Optional —
+    /// a signature that satisfied no protocol requirement, so `RingSyncCoordinator`'s call hit the
+    /// no-op default extension and the user's config was silently dropped in favour of `.allOnDefault`.
+    func testSavedMeasurementSettingsAreHonouredOverTheForcedDefault() {
+        let w = FakeWriter()
+        let engine = CRPSyncEngine(writer: w)
+        var settings = MeasurementSettings.allOnDefault
+        settings.spo2Enabled = false
+        engine.setMeasurementSettings(settings)
+        engine.runStartup()
+        guard let index = w.opcodes.firstIndex(of: [1, 8]) else { return XCTFail("no SpO2 timing command") }
+        XCTAssertEqual(w.payloadByte(index, 6), 0, "a disabled vital sends interval 0, not the default")
+    }
+
+    /// The history pull uses the group-2 opcodes. Temperature is cmd **22** (`b1/i0.b`) — cmd 48 is
+    /// the vendor's `querySleepState`, which is why the ring never answered the old query.
     func testRunStartupQueriesHistoryOnGroupTwo() {
         let w = FakeWriter()
         let engine = CRPSyncEngine(writer: w)
         engine.runStartup()
-        for cmd in [15, 17, 16, 47, 48, 14] {   // HR, SpO2, HRV, stress, temp, sleep
+        for cmd in [15, 17, 16, 47, 22, 14] {   // HR, SpO2, HRV, stress, temp, sleep
             XCTAssertTrue(w.opcodes.contains([2, cmd]), "expected group2/cmd\(cmd) history query")
         }
-        XCTAssertFalse(w.opcodes.contains { $0[0] == 7 && $0[1] != 1 },
-                       "group 7 should carry only the firmware query now")
+        XCTAssertFalse(w.opcodes.contains([2, 48]), "cmd 48 is querySleepState, not temperature history")
     }
 
     /// Each timing query starts at frame 0 of today.
