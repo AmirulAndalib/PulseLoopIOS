@@ -27,6 +27,21 @@ final class CRPSyncEngine: RingSyncEngine {
 
     private weak var writer: RingCommandWriter?
     private var profile: UserProfileValues?
+    private let historyWatchdogNanos: UInt64
+    private let eventSink: @MainActor (PulseEvent) -> Void
+
+    /// The four framed timing streams that have a protocol-defined terminal cursor. Sleep and
+    /// temperature do not: sleep is a single reply (or silence), while temperature's reply layout is
+    /// not capture-confirmed. Those silent streams are bounded by the watchdog below.
+    private static let timingHistoryCommands: Set<Int> = [
+        CRPCommands.cmdQueryTimingHR,
+        CRPCommands.cmdQueryTimingHRV,
+        CRPCommands.cmdQueryTimingSpO2,
+        CRPCommands.cmdQueryTimingStress,
+    ]
+    private var pendingTimingHistoryCommands: Set<Int> = []
+    private var historySyncInFlight = false
+    private var historyCompletionTask: Task<Void, Never>?
 
     /// User-chosen all-day measurement config. Applied in the connect handshake and updatable
     /// live via `applyMeasurementSettings`. `nil` ⇒ the user has never saved one, and a fresh R11
@@ -56,8 +71,38 @@ final class CRPSyncEngine: RingSyncEngine {
     /// sync re-pulls the full timeline.
     private var requestedTimingFrames: Set<TimingFrameRequest> = []
 
-    init(writer: RingCommandWriter?) {
+    init(
+        writer: RingCommandWriter?,
+        // Below RingSyncCoordinator's 20-second stall deadline so this engine's explicit `done` wins.
+        historyWatchdogNanos: UInt64 = 15_000_000_000,
+        eventSink: @escaping @MainActor (PulseEvent) -> Void = { event in
+            Task { PulseEventBus.shared.publish(event) }
+        }
+    ) {
         self.writer = writer
+        self.historyWatchdogNanos = historyWatchdogNanos
+        self.eventSink = eventSink
+    }
+
+    // MARK: - Link lifecycle
+
+    /// Auto-reconnect reuses this engine, but "once per connection" queries must be once per GATT
+    /// link. The previous link may have dropped while those frames were still in RingBLEClient's
+    /// queue, which is cleared on disconnect; retaining these flags would silently lose them forever.
+    func connectionDidStart() {
+        resetPerLinkState()
+    }
+
+    /// Cancel without publishing `done`: a disconnected transfer did not complete successfully.
+    func connectionDidEnd() {
+        resetPerLinkState()
+    }
+
+    private func resetPerLinkState() {
+        cancelHistorySync()
+        connectionQueriesSent = false
+        sleepBackfillSent = false
+        requestedTimingFrames.removeAll()
     }
 
     func runStartup() {
@@ -71,21 +116,15 @@ final class CRPSyncEngine: RingSyncEngine {
         // empty reply (Android issue #29, zaggash's full-day capture). When the user has saved a
         // config we honour it exactly (interval included); until then we fall back to allOnDefault.
         applyTimingSettings(measurementSettings ?? .allOnDefault)
-        // Pull the day's stored all-day timeline. runStartup() IS the poll pass (the background sync
-        // and a foreground sync both re-invoke it), so this runs at the app's configured cadence; the
-        // ring samples at hrIntervalMinutes (above). The ring only emits history replies once asked.
-        queryAllHistory()
+        // Pull the day's stored all-day timeline during startup. Later foreground/background
+        // refreshes enter through syncHistory(). The ring only emits history replies once asked.
+        startHistorySync(includeSleepBackfill: true)
     }
 
-    /// Whether the self-description queries have been sent on this engine instance.
+    /// Whether the self-description queries have been sent on this GATT link.
     ///
-    /// **"Once per connection" here means once per driver install, not once per GATT link.** Only
-    /// `beginConnect`/`adoptRememberedIdentity` call `RingBLEClient.installDriver` (which is what
-    /// builds this engine via `driver.makeSyncEngine()`); auto-reconnect re-dials with a bare
-    /// `central.connect` and keeps the same instance. So these queries survive a dropped link and are
-    /// not re-sent on the reconnect — which is the behaviour we want, since neither what the ring
-    /// supports nor the nights it holds change across a reconnect, and the `fdd2` channel is the
-    /// scarce resource. Don't "fix" this by resetting the flag in a lifecycle hook.
+    /// The engine instance survives auto-reconnect, so `connectionDidStart`/`connectionDidEnd` reset
+    /// this flag. That is necessary because the BLE client drops queued writes with the old link.
     private var connectionQueriesSent = false
 
     /// Ask the ring to describe itself, once per connection.
@@ -99,8 +138,8 @@ final class CRPSyncEngine: RingSyncEngine {
     /// lacks the sensor" — stress (`2/47`) and temperature (`2/22`) both went unanswered on zaggash's
     /// ring, and these replies are how we tell those apart next capture.
     ///
-    /// Deliberately **not** part of the poll pass. `runStartup` doubles as the background re-sync, but
-    /// neither a firmware string nor a sensor roster can change between syncs. Re-asking would add
+    /// Deliberately **not** part of the periodic poll pass. Neither a firmware string nor a sensor
+    /// roster can change between syncs. Re-asking would add
     /// seven writes to every pass on a ring that funnels the handshake, timing config, history pull
     /// *and* on-demand measures through the single `fdd2` channel — and a spot SpO2 needs ~48 s of
     /// that channel to return a reading. (Firmware used to be sent unconditionally here, which
@@ -128,7 +167,7 @@ final class CRPSyncEngine: RingSyncEngine {
     /// timelines (HR/SpO2/HRV/stress), temperature, and sleep. Vendor `u3/g1.java` fires the same set
     /// on its sync pass. Each timing query pulls frame 0; the reply drives `handle` to pull the next
     /// frame until the day is complete.
-    private func queryAllHistory() {
+    private func queryAllHistory(includeSleepBackfill: Bool) {
         requestedTimingFrames.removeAll()
         send(CRPProtocol.queryTimingHeartRateHistory())
         send(CRPProtocol.queryTimingSpO2History())
@@ -136,11 +175,56 @@ final class CRPSyncEngine: RingSyncEngine {
         send(CRPProtocol.queryTimingStressHistory())
         send(CRPProtocol.queryHistoryTemp())
         send(CRPProtocol.queryHistorySleep())
-        sendSleepBackfill()
+        if includeSleepBackfill { sendSleepBackfill() }
     }
 
-    /// Whether older nights have already been backfilled on this engine instance. Same
-    /// once-per-driver-install scope as `connectionQueriesSent` — see there.
+    /// Start one standalone history pass. Periodic BLE wakeups can race the foreground timer, so a
+    /// second kick while the first pass is awaiting frames is intentionally ignored.
+    private func startHistorySync(includeSleepBackfill: Bool) {
+        guard !historySyncInFlight else { return }
+        historySyncInFlight = true
+        pendingTimingHistoryCommands = Self.timingHistoryCommands
+        eventSink(.syncProgress(stage: "Syncing ring history…"))
+        queryAllHistory(includeSleepBackfill: includeSleepBackfill)
+        armHistoryCompletionWatchdog()
+    }
+
+    /// CRP history is a standalone query set, so it participates in the coordinator's periodic and
+    /// background top-up path without replaying clock/profile/timing configuration writes.
+    func syncHistory() {
+        startHistorySync(includeSleepBackfill: false)
+    }
+
+    private func armHistoryCompletionWatchdog() {
+        historyCompletionTask?.cancel()
+        let delay = historyWatchdogNanos
+        historyCompletionTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: delay)
+            guard let self, !Task.isCancelled else { return }
+            // Unsupported/disabled streams are allowed to stay silent. Reaching the bounded deadline
+            // completes the poll with whatever the ring did return instead of wedging sync forever.
+            self.finishHistorySync()
+        }
+    }
+
+    private func finishHistorySync() {
+        guard historySyncInFlight else { return }
+        historySyncInFlight = false
+        pendingTimingHistoryCommands.removeAll()
+        requestedTimingFrames.removeAll()
+        historyCompletionTask?.cancel()
+        historyCompletionTask = nil
+        eventSink(.syncProgress(stage: "done"))
+    }
+
+    private func cancelHistorySync() {
+        historySyncInFlight = false
+        pendingTimingHistoryCommands.removeAll()
+        historyCompletionTask?.cancel()
+        historyCompletionTask = nil
+    }
+
+    /// Whether older nights have already been backfilled on this GATT link.
     private var sleepBackfillSent = false
 
     /// Pull the nights *before* today, once per connection.
@@ -153,8 +237,8 @@ final class CRPSyncEngine: RingSyncEngine {
     /// so `CRPDecoder.decodeSleep` dates a night from the reply rather than from what we asked for,
     /// and a day the ring has no record of simply produces no reply — the same nothing we get today.
     ///
-    /// Once per connection, and deliberately short of the decoder's 14-day ceiling: `runStartup` is
-    /// also the background sync, and this ring funnels the handshake, timing config, history pull
+    /// Once per connection, and deliberately short of the decoder's 14-day ceiling. This ring
+    /// funnels the handshake, timing config, history pull
     /// *and* on-demand measures through one `fdd2` channel (a spot SpO2 needs ~48 s of it). A week is
     /// the useful-recovery/quiet-channel trade; raise it once hardware shows the ring answers deeper.
     private func sendSleepBackfill() {
@@ -196,7 +280,17 @@ final class CRPSyncEngine: RingSyncEngine {
         // the ring returns, request the next frame until the vital's terminal index — the vendor's
         // sequential `insertBleMessage(<query>.b(day, index + 1))` (`e1/{f,d,g,l}.java`). The samples
         // themselves are decoded + persisted via the bridge; this only advances the cursor.
-        guard case let .timingHistoryFrame(cmd, day, frameIndex) = event else { return }
+        guard historySyncInFlight,
+              case let .timingHistoryFrame(cmd, day, frameIndex) = event,
+              Self.timingHistoryCommands.contains(cmd) else { return }
+        if day == CRPCommands.historyDayToday,
+           frameIndex >= terminalFrameIndex(cmd: cmd) {
+            pendingTimingHistoryCommands.remove(cmd)
+            if pendingTimingHistoryCommands.isEmpty {
+                finishHistorySync()
+            }
+            return
+        }
         if frameIndex >= terminalFrameIndex(cmd: cmd) { return }
         let nextIndex = frameIndex + 1
         // Guard against a ring that re-sends the same frame spamming duplicate follow-ups.
@@ -247,16 +341,31 @@ final class CRPSyncEngine: RingSyncEngine {
     /// per-vital cadence), so the HR interval is shared across the board. Disabled vitals are
     /// explicitly turned off so a reconnect can't leave a previously-enabled monitor running.
     private func applyTimingSettings(_ settings: MeasurementSettings) {
-        if settings.hrEnabled { send(CRPProtocol.enableTimingHeartRate(intervalMinutes: settings.hrIntervalMinutes)) }
-        else { send(CRPProtocol.disableTimingHeartRate()) }
-        if settings.hrvEnabled { send(CRPProtocol.enableTimingHRV(intervalMinutes: settings.hrIntervalMinutes)) }
-        else { send(CRPProtocol.disableTimingHRV()) }
-        if settings.stressEnabled { send(CRPProtocol.enableTimingStress(intervalMinutes: settings.hrIntervalMinutes)) }
-        else { send(CRPProtocol.disableTimingStress()) }
-        if settings.spo2Enabled { send(CRPProtocol.enableTimingSpO2(intervalMinutes: settings.hrIntervalMinutes)) }
-        else { send(CRPProtocol.disableTimingSpO2()) }
-        if settings.temperatureEnabled { send(CRPProtocol.enableTimingTemp()) }
-        else { send(CRPProtocol.disableTimingTemp()) }
+        if settings.hrEnabled {
+            send(CRPProtocol.enableTimingHeartRate(intervalMinutes: settings.hrIntervalMinutes))
+        } else {
+            send(CRPProtocol.disableTimingHeartRate())
+        }
+        if settings.hrvEnabled {
+            send(CRPProtocol.enableTimingHRV(intervalMinutes: settings.hrIntervalMinutes))
+        } else {
+            send(CRPProtocol.disableTimingHRV())
+        }
+        if settings.stressEnabled {
+            send(CRPProtocol.enableTimingStress(intervalMinutes: settings.hrIntervalMinutes))
+        } else {
+            send(CRPProtocol.disableTimingStress())
+        }
+        if settings.spo2Enabled {
+            send(CRPProtocol.enableTimingSpO2(intervalMinutes: settings.hrIntervalMinutes))
+        } else {
+            send(CRPProtocol.disableTimingSpO2())
+        }
+        if settings.temperatureEnabled {
+            send(CRPProtocol.enableTimingTemp())
+        } else {
+            send(CRPProtocol.disableTimingTemp())
+        }
     }
 
     func resyncTime() { send(CRPProtocol.setTime()) }

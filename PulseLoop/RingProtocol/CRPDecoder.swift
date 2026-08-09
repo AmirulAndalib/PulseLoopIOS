@@ -212,8 +212,9 @@ enum CRPDecoder {
     /// zaggash's R11 capture and the vendor parsers `e1/{f,g,d,l}.java`:
     ///   `[day][frameIndex][slot samples…]` — one 5-minute slot per sample, `0` = no reading.
     /// HR/SpO2/stress use one byte per slot; HRV a little-endian 2-byte value. Each slot's absolute
-    /// time is `localMidnight(today − day) + (frameIndex*slotsPerFrame + slot)*5min`, matching the
-    /// vendor's `w0.b.a()/5` slot indexing. Emits one `.historyMeasurement` per valid slot plus a
+    /// time is the corresponding local wall-clock minute on `today − day`, matching the vendor's
+    /// `w0.b.a()/5` slot indexing. Nonexistent spring-forward slots are skipped and repeated fall-back
+    /// slots select their first occurrence. Emits one `.historyMeasurement` per valid slot plus a
     /// trailing `.timingHistoryFrame` that drives the engine's next-frame follow-up.
     private static func decodeTimingHistory(cmd: Int, payload: [UInt8], now: Date,
                                             calendar: Calendar) -> [RingDecodedEvent]? {
@@ -239,16 +240,20 @@ enum CRPDecoder {
         if payload.count < 2 { return [] }
         let day = Int(payload[0])
         let frameIndex = Int(payload[1])
-        // A wilder day than CRPHistoryDay allows is a corrupt reply — ack without inventing samples.
-        if day > maxHistoryDay {
-            return [.commandAck(commandId: UInt8(truncatingIfNeeded: (CRPCommands.groupHistory << 4) | (cmd & 0x0F)))]
+        let slotsPerFrame = twoByte ? timingSlotsPerFrame2Byte : timingSlotsPerFrame1Byte
+        let step = twoByte ? 2 : 1
+        let terminalFrameIndex = twoByte ? 3 : 1
+        let sampleByteCount = payload.count - 2
+        // Cursors and frame widths are fixed by the vendor parsers. Reject the whole reply rather than
+        // letting extra bytes spill into another frame's timestamps or a bad cursor end the sync early.
+        if day > maxHistoryDay || frameIndex > terminalFrameIndex
+            || sampleByteCount > slotsPerFrame * step || sampleByteCount % step != 0 {
+            return timingHistoryMalformedAck(cmd: cmd)
         }
         guard let midnight = calendar.date(byAdding: .day, value: -day, to: calendar.startOfDay(for: now)) else {
             return []
         }
 
-        let slotsPerFrame = twoByte ? timingSlotsPerFrame2Byte : timingSlotsPerFrame1Byte
-        let step = twoByte ? 2 : 1
         var events: [RingDecodedEvent] = []
         var slot = 0
         var i = 2
@@ -256,8 +261,9 @@ enum CRPDecoder {
             let value = twoByte ? (Int(payload[i]) | (Int(payload[i + 1]) << 8)) : Int(payload[i])
             if valid(value) {
                 let globalSlot = frameIndex * slotsPerFrame + slot
-                let ts = midnight.addingTimeInterval(Double(globalSlot * timingSlotMinutes * 60))
-                events.append(.historyMeasurement(kind: kind, value: Double(value), timestamp: ts))
+                if let ts = timingSlotDate(globalSlot: globalSlot, midnight: midnight, calendar: calendar) {
+                    events.append(.historyMeasurement(kind: kind, value: Double(value), timestamp: ts))
+                }
             }
             i += step
             slot += 1
@@ -265,6 +271,29 @@ enum CRPDecoder {
         // Drive the vendor's sequential next-frame pull (see `.timingHistoryFrame`).
         events.append(.timingHistoryFrame(cmd: cmd, day: day, frameIndex: frameIndex))
         return events
+    }
+
+    private static func timingHistoryMalformedAck(cmd: Int) -> [RingDecodedEvent] {
+        [.commandAck(commandId: UInt8(truncatingIfNeeded:
+            (CRPCommands.groupHistory << 4) | (cmd & 0x0F)))]
+    }
+
+    /// Resolve the ring's minute-of-day slot without treating a DST change as elapsed-time arithmetic.
+    /// `.strict` keeps a nonexistent spring-forward wall time nil; `.first` makes fall-back deterministic.
+    private static func timingSlotDate(globalSlot: Int, midnight: Date, calendar: Calendar) -> Date? {
+        let minuteOfDay = globalSlot * timingSlotMinutes
+        guard minuteOfDay >= 0 && minuteOfDay < 24 * 60 else { return nil }
+        var components = calendar.dateComponents([.era, .year, .month, .day], from: midnight)
+        components.hour = minuteOfDay / 60
+        components.minute = minuteOfDay % 60
+        components.second = 0
+        return calendar.nextDate(
+            after: midnight.addingTimeInterval(-1),
+            matching: components,
+            matchingPolicy: .strict,
+            repeatedTimePolicy: .first,
+            direction: .forward
+        )
     }
 
     /// The firmware version string (`group 3 / cmd 3`). Vendor `g1/a.i1`:
@@ -353,8 +382,9 @@ enum CRPDecoder {
     ///    transition beats inventing minutes up to "now".
     ///  - Session-start anchoring is ours (the vendor keeps minute-of-day only and lets the UI place
     ///    the date from `dayIndex`). We anchor the FIRST record on the wake day (`today − dayIndex`)
-    ///    with the same evening-rollover rule as Colmi — a first record later in the clock than the
-    ///    last means the night began before midnight — then place later bouts by elapsed offset.
+    ///    from the actual midnight rollover in the transition sequence, then place later bouts by
+    ///    elapsed offset. Looking only at the final record fails when an overnight bout is followed by
+    ///    another late-evening bout whose clock time is later than the first record.
     ///    NOTE: assumes `dayIndex` is the WAKE day; verified against a post-midnight capture, but an
     ///    evening-start night is not yet capture-confirmed.
     private static func decodeSleep(_ payload: [UInt8], now: Date, calendar: Calendar) -> [RingDecodedEvent] {
@@ -369,7 +399,7 @@ enum CRPDecoder {
         // advancing the cursor, matching the vendor's `iA >= 0` guard.
         var transitions: [SleepTransition] = []
         var firstMinuteOfDay = -1
-        var lastMinuteOfDay = 0
+        var crossedMidnight = false
         var elapsed = 0
         var prevHour = 0
         var prevMinute = 0
@@ -381,14 +411,13 @@ enum CRPDecoder {
             if hour > 23 || minute > 59 { continue }
             if transitions.isEmpty {
                 firstMinuteOfDay = hour * 60 + minute
-                lastMinuteOfDay = firstMinuteOfDay
                 transitions.append(SleepTransition(elapsed: 0, state: state))
             } else {
                 let duration = sleepSegmentMinutes(prevHour: prevHour, prevMinute: prevMinute,
                                                    hour: hour, minute: minute)
                 if duration < 0 || duration > maxSleepMinutes { continue }
+                if hour < prevHour { crossedMidnight = true }
                 elapsed += duration
-                lastMinuteOfDay = hour * 60 + minute
                 transitions.append(SleepTransition(elapsed: elapsed, state: state))
             }
             prevHour = hour
@@ -397,7 +426,7 @@ enum CRPDecoder {
         if transitions.count < 2 { return [] }
 
         // Anchor the first record; every bout is then just an offset from it.
-        let startOffset = firstMinuteOfDay > lastMinuteOfDay ? firstMinuteOfDay - 1440 : firstMinuteOfDay
+        let startOffset = firstMinuteOfDay - (crossedMidnight ? 1440 : 0)
         guard let wakeDayStart = calendar.date(byAdding: .day, value: -dayIndex,
                                                to: calendar.startOfDay(for: now)) else { return [] }
         let anchor = wakeDayStart.addingTimeInterval(Double(startOffset) * 60)

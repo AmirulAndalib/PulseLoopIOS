@@ -31,6 +31,22 @@ final class CRPProtocolTests: XCTestCase {
         XCTAssertEqual(CRPProtocol.frameLength(Data([0xFD, 0xDA, 0x11, 5])), 256 + 5)
     }
 
+    func testFrameEncodesTheNinthLengthBit() {
+        let frame = CRPProtocol.frame(group: 2, cmd: 15, payload: [UInt8](repeating: 0, count: 250))
+        XCTAssertEqual(frame.count, 256)
+        XCTAssertEqual(frame[2], 0x11)
+        XCTAssertEqual(frame[3], 0x00)
+        XCTAssertEqual(CRPProtocol.frameLength(frame), 256)
+    }
+
+    func testFrameSupportsTheMaximum511ByteLength() {
+        let frame = CRPProtocol.frame(group: 2, cmd: 15, payload: [UInt8](repeating: 0, count: 505))
+        XCTAssertEqual(frame.count, 511)
+        XCTAssertEqual(frame[2], 0x11)
+        XCTAssertEqual(frame[3], 0xFF)
+        XCTAssertEqual(CRPProtocol.frameLength(frame), 511)
+    }
+
     func testSetUserInfoMatchesVendorLayout() {
         // b1/k.a: q.c(1, 0, [height, weight, age, gender, strideLen])
         let f = CRPProtocol.setUserInfo(heightCm: 175, weightKg: 70, ageYears: 30, gender: 1, strideCm: 75)

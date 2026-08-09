@@ -341,6 +341,82 @@ final class CRPDecoderTests: XCTestCase {
         }
     }
 
+    func testTimingHistoryRejectsOutOfRangeFrameIndices() {
+        for (cmd, frameIndex) in [(CRPCommands.cmdQueryTimingHR, 2),
+                                  (CRPCommands.cmdQueryTimingHRV, 4)] {
+            let frame = CRPProtocol.frame(group: CRPCommands.groupHistory, cmd: cmd,
+                                          payload: [0, UInt8(frameIndex), 60])
+            let events = CRPDecoder.decode(frame, from: fdd3)
+            XCTAssertEqual(events.count, 1)
+            guard case .commandAck = events[0] else {
+                return XCTFail("expected malformed frame to ack, got \(events[0])")
+            }
+        }
+    }
+
+    func testTimingHistoryRejectsOversizedFramesAndMisalignedHRV() {
+        let oversizedHR = CRPProtocol.frame(
+            group: CRPCommands.groupHistory,
+            cmd: CRPCommands.cmdQueryTimingHR,
+            payload: [0, 0] + [UInt8](repeating: 60, count: 145)
+        )
+        let oversizedHRV = CRPProtocol.frame(
+            group: CRPCommands.groupHistory,
+            cmd: CRPCommands.cmdQueryTimingHRV,
+            payload: [0, 0] + [UInt8](repeating: 1, count: 73 * 2)
+        )
+        let misalignedHRV = CRPProtocol.frame(
+            group: CRPCommands.groupHistory,
+            cmd: CRPCommands.cmdQueryTimingHRV,
+            payload: [0, 0, 40]
+        )
+        for frame in [oversizedHR, oversizedHRV, misalignedHRV] {
+            let events = CRPDecoder.decode(frame, from: fdd3)
+            XCTAssertEqual(events.count, 1)
+            guard case .commandAck = events[0] else {
+                return XCTFail("expected malformed frame to ack, got \(events[0])")
+            }
+        }
+    }
+
+    func testTimingHistoryUsesWallClockSlotsAndSkipsSpringForwardGap() {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "America/New_York")!
+        let now = cal.date(from: DateComponents(year: 2026, month: 3, day: 8, hour: 12))!
+        var samples = [UInt8](repeating: 0, count: 37)
+        samples[24] = 60 // 02:00 does not exist on this day.
+        samples[36] = 61 // 03:00 is the first slot after the jump.
+        let frame = CRPProtocol.frame(group: CRPCommands.groupHistory,
+                                      cmd: CRPCommands.cmdQueryTimingHR,
+                                      payload: [0, 0] + samples)
+        let events = CRPDecoder.decode(frame, from: fdd3, now: now, calendar: cal)
+        let history = events.compactMap { event -> (Double, Date)? in
+            guard case let .historyMeasurement(_, value, timestamp) = event else { return nil }
+            return (value, timestamp)
+        }
+        XCTAssertEqual(history.count, 1, "the nonexistent 02:00 slot must be skipped")
+        XCTAssertEqual(history[0].0, 61)
+        XCTAssertEqual(cal.component(.hour, from: history[0].1), 3)
+        XCTAssertEqual(cal.component(.minute, from: history[0].1), 0)
+    }
+
+    func testTimingHistoryChoosesFirstOccurrenceOfRepeatedFallBackSlot() {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "America/New_York")!
+        let now = cal.date(from: DateComponents(year: 2026, month: 11, day: 1, hour: 12))!
+        var samples = [UInt8](repeating: 0, count: 19)
+        samples[18] = 60 // 01:30 occurs twice.
+        let frame = CRPProtocol.frame(group: CRPCommands.groupHistory,
+                                      cmd: CRPCommands.cmdQueryTimingHR,
+                                      payload: [0, 0] + samples)
+        let events = CRPDecoder.decode(frame, from: fdd3, now: now, calendar: cal)
+        guard case let .historyMeasurement(_, _, timestamp) = events.first else {
+            return XCTFail("expected historyMeasurement")
+        }
+        XCTAssertEqual(cal.timeZone.secondsFromGMT(for: timestamp), -4 * 60 * 60,
+                       "the first 01:30 is still in daylight time")
+    }
+
     /// Temperature history (cmd 48) has no confirmed layout yet — it must stay an ack.
     func testTemperatureHistoryStaysAnAck() {
         let frame = CRPProtocol.frame(group: CRPCommands.groupHistory,
@@ -532,5 +608,40 @@ final class CRPDecoderTests: XCTestCase {
         XCTAssertEqual(stages.count, 180)
         // 23:00 the previous evening = wake-day midnight minus 60 minutes.
         XCTAssertEqual(ts, cal.startOfDay(for: now).addingTimeInterval(-60 * 60))
+    }
+
+    func testSleepAnchorsFromMidnightRolloverWhenALaterBoutEndsAfterTheFirstClockTime() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let cal = utcCalendar
+        // Prior 23:00 light → 07:00 awake, then 22:30 light → 23:30 awake on the wake day.
+        // The final clock time is later than the first, but the 23:00→07:00 rollover still proves
+        // that the first bout began on the previous day.
+        let frame = CRPProtocol.frame(group: CRPCommands.groupHistory,
+                                      cmd: CRPCommands.cmdQueryHistorySleep,
+                                      payload: [0, 1, 23, 0, 0, 7, 0, 1, 22, 30, 0, 23, 30])
+        let events = CRPDecoder.decode(frame, from: fdd3, now: now, calendar: cal)
+        XCTAssertEqual(events.count, 2)
+        guard case let .sleepTimeline(firstStart, _) = events[0],
+              case let .sleepTimeline(secondStart, _) = events[1] else {
+            return XCTFail("expected two sleep bouts")
+        }
+        let wakeDayStart = cal.startOfDay(for: now)
+        XCTAssertEqual(firstStart, wakeDayStart.addingTimeInterval(-60 * 60))
+        XCTAssertEqual(secondStart, wakeDayStart.addingTimeInterval((22 * 60 + 30) * 60))
+    }
+
+    func testSleepNeverMovesAOneDayReplyBackMoreThanOneDay() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let cal = utcCalendar
+        // Two backward clock transitions are malformed for one day reply. They must not shift the
+        // first transition two days back; dayIndex identifies a single wake day.
+        let frame = CRPProtocol.frame(group: CRPCommands.groupHistory,
+                                      cmd: CRPCommands.cmdQueryHistorySleep,
+                                      payload: [0, 1, 23, 0, 2, 1, 0, 1, 23, 0, 0, 1, 0])
+        let events = CRPDecoder.decode(frame, from: fdd3, now: now, calendar: cal)
+        guard case let .sleepTimeline(firstStart, _) = events.first else {
+            return XCTFail("expected sleepTimeline")
+        }
+        XCTAssertEqual(firstStart, cal.startOfDay(for: now).addingTimeInterval(-60 * 60))
     }
 }

@@ -179,10 +179,11 @@ enum CRPProtocol {
     /// Build a fully-framed CRP packet: `FD DA 10 <len> <group> <cmd> <payload>`.
     static func frame(group: Int, cmd: Int, payload: [UInt8] = []) -> Data {
         let total = payload.count + headerSize
+        precondition(total <= 0x1FF, "CRP frames cannot exceed the protocol's 511-byte length field")
         var out = [UInt8](repeating: 0, count: total)
         out[0] = header0
         out[1] = header1
-        out[2] = header2
+        out[2] = header2 | UInt8((total >> 8) & 0x01)
         out[3] = UInt8(truncatingIfNeeded: total)
         out[4] = UInt8(truncatingIfNeeded: group)
         out[5] = UInt8(truncatingIfNeeded: cmd)

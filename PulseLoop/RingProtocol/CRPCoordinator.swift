@@ -52,7 +52,7 @@ final class CRPCoordinator: WearableCoordinator {
     let capabilities: Set<WearableCapability> = [
         .steps, .realtimeSteps,
         .heartRate, .realtimeHeartRate, .manualHeartRate, .manualSpo2,
-        .spo2, .stress, .hrv, .temperature,
+        .spo2, .stress, .hrv, .sleep,
         .battery,
         .findDevice,
     ]

@@ -26,6 +26,13 @@ struct WearableModel: Identifiable {
     /// The native apps this exact product is sold with, when there is more than one (the Colmi line).
     /// Empty for single-firmware models, which stay fully auto-detected and show no picker.
     var appVariants: [AppVariantOption] = []
+    /// Scan classifications this card may deliberately override with its own `family`.
+    ///
+    /// Empty for normal cards: their scan match remains authoritative unless an app variant says
+    /// otherwise. CRP's R11 is the exception because its generic `SMART_RING` advertisement is
+    /// indistinguishable from jring until GATT discovery, so its explicit card accepts only the two
+    /// classifications that can legitimately describe that hardware (`.jring` and `.crp`).
+    var forcedFamilyScanMatches: Set<RingDeviceType> = []
 
     /// Maturity of this model's driver, mirrored from its `family` (the real source of truth).
     var supportLevel: WearableSupportLevel { family.supportLevel }
@@ -235,7 +242,8 @@ extension WearableModel {
     static let colmiR11CRP = WearableModel(
         id: "colmi-r11-crp", displayName: "Colmi R11 (Da Rings app)", brand: "Colmi", family: .crp,
         tint: PulseColors.hrv, blurb: "HR · Steps",
-        advertisedNamePatterns: [], imageName: "yawell-r11"
+        advertisedNamePatterns: [], imageName: "yawell-r11",
+        forcedFamilyScanMatches: [.jring, .crp]
     )
 
     // Yawell-branded variants of the same hardware.
@@ -343,9 +351,17 @@ extension WearableModel {
         rowFamily: RingDeviceType?,
         hinted: RingAppVariant?
     ) -> RingDeviceType? {
+        if let rowFamily, forcedFamilyScanMatches.contains(rowFamily) { return family }
         guard let variant = variant(picked: picked, rowFamily: rowFamily, hinted: hinted) else { return nil }
         guard rowFamily.map(families.contains) ?? true else { return nil }
         return family(for: variant)
+    }
+
+    /// Whether a scan-tagged row belongs under this card. Usually this is exactly `families`; the CRP
+    /// R11 additionally admits the ambiguous `.jring` tag that its `SMART_RING` name receives.
+    func acceptsScanFamily(_ scanFamily: RingDeviceType?) -> Bool {
+        guard let scanFamily else { return false }
+        return families.contains(scanFamily) || forcedFamilyScanMatches.contains(scanFamily)
     }
 
     /// The other app on this card, offered as one-tap recovery after a wrong pick.

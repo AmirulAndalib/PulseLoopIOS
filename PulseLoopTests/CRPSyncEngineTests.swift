@@ -15,6 +15,13 @@ final class CRPSyncEngineTests: XCTestCase {
         func payloadByte(_ frame: Int, _ index: Int) -> Int { Int([UInt8](sent[frame])[index]) }
     }
 
+    private func finishTimingHistory(_ engine: CRPSyncEngine) {
+        engine.handle(.timingHistoryFrame(cmd: CRPCommands.cmdQueryTimingHR, day: 0, frameIndex: 1))
+        engine.handle(.timingHistoryFrame(cmd: CRPCommands.cmdQueryTimingSpO2, day: 0, frameIndex: 1))
+        engine.handle(.timingHistoryFrame(cmd: CRPCommands.cmdQueryTimingStress, day: 0, frameIndex: 1))
+        engine.handle(.timingHistoryFrame(cmd: CRPCommands.cmdQueryTimingHRV, day: 0, frameIndex: 3))
+    }
+
     /// The connect handshake leads with set-time, then user info once a profile exists, then the
     /// self-description queries. Everything after that is the all-day timing config and the history
     /// pull, covered by their own tests below.
@@ -93,6 +100,7 @@ final class CRPSyncEngineTests: XCTestCase {
             .map { w.payloadByte($0, 6) }
         XCTAssertEqual(sleepDays, [0, 1, 2, 3, 4, 5, 6], "today plus six nights of backfill")
 
+        finishTimingHistory(engine)
         w.sent.removeAll()
         engine.runStartup()
         let secondPass = w.opcodes.indices
@@ -221,13 +229,14 @@ final class CRPSyncEngineTests: XCTestCase {
         XCTAssertEqual(w.sent.count, 1)
     }
 
-    /// Each sync pass re-pulls the whole timeline, so the dedupe guard resets on every startup.
+    /// Each completed sync pass re-pulls the whole timeline, so its dedupe guard resets for the next.
     func testFollowUpGuardResetsEachSyncPass() {
         let w = FakeWriter()
         let engine = CRPSyncEngine(writer: w)
         engine.runStartup()
         engine.handle(.timingHistoryFrame(cmd: 15, day: 0, frameIndex: 0))
-        engine.runStartup()
+        finishTimingHistory(engine)
+        engine.syncHistory()
         w.sent.removeAll()
         engine.handle(.timingHistoryFrame(cmd: 15, day: 0, frameIndex: 0))
         XCTAssertEqual(w.sent.count, 1, "a new pass may re-request frame 1")
@@ -257,5 +266,95 @@ final class CRPSyncEngineTests: XCTestCase {
         engine.handle(.heartRateSample(bpm: 60, timestamp: Date()))
         engine.handle(.wearingStatus(worn: false, timestamp: Date()))
         XCTAssertTrue(w.sent.isEmpty)
+    }
+
+    // MARK: - Sync lifecycle + completion
+
+    func testPeriodicSyncHistoryIsStandaloneAndRejectsAConcurrentKick() {
+        let w = FakeWriter()
+        var stages: [String] = []
+        let engine = CRPSyncEngine(writer: w, eventSink: { event in
+            if case let .syncProgress(stage) = event { stages.append(stage) }
+        })
+
+        engine.syncHistory()
+        let firstPass = w.sent
+        engine.syncHistory()
+
+        XCTAssertEqual(w.sent, firstPass, "an in-flight pass must reject a duplicate periodic kick")
+        XCTAssertEqual(stages, ["Syncing ring history…"])
+        XCTAssertFalse(w.opcodes.contains([3, 3]), "periodic history must not replay the connect handshake")
+        let sleepDays = w.opcodes.indices
+            .filter { w.opcodes[$0] == [2, 14] }
+            .map { w.payloadByte($0, 6) }
+        XCTAssertEqual(sleepDays, [0], "periodic history pulls today, not the per-link backfill")
+    }
+
+    func testAllTerminalTimingStreamsPublishExactlyOneDone() {
+        let w = FakeWriter()
+        var stages: [String] = []
+        let engine = CRPSyncEngine(writer: w, eventSink: { event in
+            if case let .syncProgress(stage) = event { stages.append(stage) }
+        })
+        engine.syncHistory()
+
+        engine.handle(.timingHistoryFrame(cmd: CRPCommands.cmdQueryTimingHR, day: 0, frameIndex: 1))
+        engine.handle(.timingHistoryFrame(cmd: CRPCommands.cmdQueryTimingSpO2, day: 0, frameIndex: 1))
+        engine.handle(.timingHistoryFrame(cmd: CRPCommands.cmdQueryTimingStress, day: 0, frameIndex: 1))
+        XCTAssertEqual(stages, ["Syncing ring history…"], "one stream is still outstanding")
+
+        engine.handle(.timingHistoryFrame(cmd: CRPCommands.cmdQueryTimingHRV, day: 0, frameIndex: 3))
+        engine.handle(.timingHistoryFrame(cmd: CRPCommands.cmdQueryTimingHRV, day: 0, frameIndex: 3))
+        XCTAssertEqual(stages, ["Syncing ring history…", "done"])
+    }
+
+    func testSilentTimingStreamsCompleteAtTheBoundedWatchdog() async {
+        let w = FakeWriter()
+        var stages: [String] = []
+        let engine = CRPSyncEngine(
+            writer: w,
+            historyWatchdogNanos: 20_000_000,
+            eventSink: { event in
+                if case let .syncProgress(stage) = event { stages.append(stage) }
+            }
+        )
+        engine.syncHistory()
+
+        try? await Task.sleep(nanoseconds: 60_000_000)
+        XCTAssertEqual(stages, ["Syncing ring history…", "done"])
+
+        // A late nonterminal reply after the watchdog must neither restart the cursor walk nor publish
+        // a second completion.
+        w.sent.removeAll()
+        engine.handle(.timingHistoryFrame(cmd: CRPCommands.cmdQueryTimingHR, day: 0, frameIndex: 0))
+        XCTAssertTrue(w.sent.isEmpty)
+        XCTAssertEqual(stages.filter { $0 == "done" }.count, 1)
+    }
+
+    func testDisconnectCancelsCompletionAndReconnectResendsPerLinkQueries() async {
+        let w = FakeWriter()
+        var stages: [String] = []
+        let engine = CRPSyncEngine(
+            writer: w,
+            historyWatchdogNanos: 20_000_000,
+            eventSink: { event in
+                if case let .syncProgress(stage) = event { stages.append(stage) }
+            }
+        )
+        engine.runStartup()
+        XCTAssertTrue(w.opcodes.contains([3, 3]))
+
+        engine.connectionDidEnd()
+        try? await Task.sleep(nanoseconds: 60_000_000)
+        XCTAssertFalse(stages.contains("done"), "a dropped link is not a completed sync")
+
+        w.sent.removeAll()
+        engine.connectionDidStart()
+        engine.runStartup()
+        XCTAssertTrue(w.opcodes.contains([3, 3]), "firmware/read-backs are once per GATT link")
+        let sleepDays = w.opcodes.indices
+            .filter { w.opcodes[$0] == [2, 14] }
+            .map { w.payloadByte($0, 6) }
+        XCTAssertEqual(sleepDays, [0, 1, 2, 3, 4, 5, 6], "backfill must be retried on the new link")
     }
 }
