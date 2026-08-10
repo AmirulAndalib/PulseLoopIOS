@@ -245,6 +245,9 @@ struct DeviceHeroCard: View {
         case .ycbt: return "r10m"
         // No RWfit hardware captured yet, so no product art — the generic ring is the honest choice.
         case .rwfit: return nil
+        // The connection reveals only the family; both R11 firmwares share the generic Colmi ring line,
+        // so the CRP family falls back to the generic ring here (the carousel card carries its own art).
+        case .crp: return nil
         case nil: return nil
         }
     }

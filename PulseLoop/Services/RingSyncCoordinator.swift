@@ -226,6 +226,14 @@ final class RingSyncCoordinator {
     /// Set when the ring reports a completed HR measurement with no usable reading (not worn), so a
     /// spot measurement can fail fast instead of waiting out the full window.
     private var hrNoReadingReported = false
+    /// The ring told us it isn't on the finger during a spot measure (CRP wear-state push). Read by
+    /// the Vitals sheet to show "put the ring on" instead of the generic steadiness hint. Set only
+    /// when the not-worn signal arrives *before* any reading, so a wear-state drop right after a good
+    /// reading can't turn a success into a failure.
+    private(set) var measureNotWorn = false
+    /// SpO2's counterpart to `hrNoReadingReported`: SpO2 has no "complete with no reading" reply, so
+    /// the wear-state push is the only thing that can abort it early.
+    private var spo2NotWornReported = false
     /// The samples of the HR measurement in flight, and the rule for whether they settled — see
     /// `HRSampleWindow`, which owns the warm-up echo and the consistency gate.
     private var hrWindow = HRSampleWindow()
@@ -488,6 +496,7 @@ final class RingSyncCoordinator {
         // NOTE: do *not* clear `latestHRValue` — it's the live value the workout UI shows, so a new
         // measurement keeps the last reading on screen until a fresh one replaces it (no blanking to —).
         hrNoReadingReported = false
+        measureNotWorn = false
         hrWindow.begin()
         // Spot reading: the engine picks the right command (jring live stream / Colmi manual 0x69
         // continuous stream). Always stop the stream when we're done so the ring doesn't keep measuring.
@@ -540,12 +549,15 @@ final class RingSyncCoordinator {
         guard client.state == .connected else { spo2State = .failed; return nil }
         spo2State = .measuring
         latestSpO2Value = nil
+        measureNotWorn = false
+        spo2NotWornReported = false
         let token = spot.begin(mode: YCBTMeasurementMode.spo2)
         engine?.startSpO2()
         let result = await pollForValue(
             window: spo2MeasureSeconds,
             value: { self.latestSpO2Value },
-            abort: { self.spot.isRejected(token) }
+            // The ring refused the measurement, or told us it isn't on the finger.
+            abort: { self.spot.isRejected(token) || self.spo2NotWornReported }
         )
         spot.end(token)
         engine?.stopSpO2()
@@ -672,6 +684,23 @@ final class RingSyncCoordinator {
             // The ring reported a genuine error/no-reading (worn incorrectly). Only fast-fail if this
             // measurement hasn't already produced a real reading.
             if hrState == .measuring, !measurementReceivedReading { hrNoReadingReported = true }
+        case let .wearState(worn):
+            // `worn == false` means no skin contact, so an optical spot measure can't read. Fast-fail
+            // the in-flight measure instead of idling out the full window, and flag *why* — but only
+            // if no reading landed first (a wear-state drop right after a good reading must not turn a
+            // success into a failure). Gated to CRP: other families' wear polarity is unverified.
+            if !worn, client.activeDeviceType == .crp {
+                var flagged = false
+                if hrState == .measuring, !measurementReceivedReading {
+                    hrNoReadingReported = true
+                    flagged = true
+                }
+                if spo2State == .measuring, latestSpO2Value == nil {
+                    spo2NotWornReported = true
+                    flagged = true
+                }
+                if flagged { measureNotWorn = true }
+            }
         case .deviceStateChanged(.connected, _):
             lastSyncAt = Date()
             // Ring came back mid-workout: the new connection's engine doesn't know a stream was

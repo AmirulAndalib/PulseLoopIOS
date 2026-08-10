@@ -26,6 +26,12 @@ enum RingDeviceType: String, Codable, CaseIterable, Sendable {
     /// advertisement cannot tell them apart; the driver picks the framing after service discovery.
     /// See `RWfitCoordinator`.
     case rwfit
+    /// CRP ("crrepa"/CRPsmart) family — the proprietary `fdda`-profile rings whose official app is
+    /// Moyoung "Da Rings" (`com.moyoung.ring`). Notably the CRP-firmware Colmi R11: it advertises the
+    /// generic "SMART_RING" name with no service UUID, so it's classified jring at scan and only reveals
+    /// its `fdda` service post-connect (issue #29, zaggash's ring). Reached on iOS by picking the
+    /// "Colmi R11 (Da Rings app)" card. See `CRPCoordinator`.
+    case crp
 
     /// Human-facing default name when no advertised name is available.
     var displayName: String {
@@ -37,6 +43,7 @@ enum RingDeviceType: String, Codable, CaseIterable, Sendable {
         case .luckRing: return "LuckRing"
         case .ycbt: return "YCBT / SmartHealth ring"
         case .rwfit: return "RWfit ring"
+        case .crp: return "Colmi / Moyoung ring (CRP)"
         }
     }
 }
