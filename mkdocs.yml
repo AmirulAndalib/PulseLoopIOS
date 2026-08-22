@@ -121,6 +121,7 @@ nav:
   - Project:
       - Roadmap: project/roadmap.md
       - Architecture: project/architecture.md
+      - Local / self-hosted LLM coach: local-llm-coach.md
       - Contributing: project/contributing.md
       - Contributors: project/contributors.md
       - Privacy: project/privacy.md
