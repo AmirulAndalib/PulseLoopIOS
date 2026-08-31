@@ -231,8 +231,17 @@ final class LocalOpenAICompatClient: ResponsesClient, @unchecked Sendable {
             "model": model,
             "messages": allMessages,
         ]
-        if !tools.isEmpty { body["tools"] = tools }
-        if let format = responseFormat() { body["response_format"] = format }
+        if !tools.isEmpty {
+            body["tools"] = tools
+            // Ollama/llama.cpp applies `response_format` as a grammar to the entire assistant
+            // generation. When native tools are present that grammar prevents the model from
+            // emitting the protocol-level `tool_calls` envelope; small models instead serialize
+            // a function-looking object as ordinary content and may falsely claim the write ran.
+            // Keep tool rounds unconstrained. If their final prose misses coach_response, the
+            // orchestrator's repair turn carries no tools and receives the configured grammar.
+        } else if let format = responseFormat() {
+            body["response_format"] = format
+        }
         if let maxOutputTokens, maxOutputTokens > 0 { body["max_tokens"] = maxOutputTokens }
         return body
     }

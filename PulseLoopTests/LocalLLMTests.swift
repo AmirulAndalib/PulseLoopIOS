@@ -312,6 +312,28 @@ final class LocalOpenAICompatClientTests: XCTestCase {
         XCTAssertEqual(nested?["strict"] as? Bool, true)
     }
 
+    func testToolRoundsOmitResponseFormatSoNativeToolCallsRemainPossible() {
+        let tool: [String: Any] = [
+            "type": "function", "name": "log_workout",
+            "parameters": ["type": "object"],
+        ]
+        for mode in [LocalStructuredOutput.jsonObject, .jsonSchema] {
+            let body = client(structured: mode).buildRequestBody(request(
+                input: [["role": "user", "content": "log my workout"]],
+                tools: [tool]))
+            XCTAssertNotNil(body["tools"], "tools must remain enabled in \(mode)")
+            XCTAssertNil(body["response_format"], "a grammar blocks native tool calls in \(mode)")
+        }
+    }
+
+    func testToollessRoundsStillApplyConfiguredResponseFormat() {
+        let body = client(structured: .jsonSchema).buildRequestBody(request(
+            input: [["role": "user", "content": "return the final answer"]]))
+        XCTAssertNil(body["tools"])
+        let format = body["response_format"] as? [String: Any]
+        XCTAssertEqual(format?["type"] as? String, "json_schema")
+    }
+
     func testMaxTokensIsOmittedUnlessPositive() {
         XCTAssertNil(client(maxTokens: nil).buildRequestBody(
             request(input: [["role": "user", "content": "hi"]]))["max_tokens"])
